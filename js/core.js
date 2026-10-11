@@ -306,6 +306,59 @@
     return out;
   }
 
+  // ---------------------------------------------------------------- エネルギーと集計（期間の合計）
+  /** 地震波のエネルギー（J）：グーテンベルク・リヒター(1956) log10 E = 1.5 M + 4.8 */
+  function energyJ(m) { return Math.pow(10, 1.5 * m + 4.8); }
+  /** エネルギー（J）を、同じエネルギーの地震 1 つの M に置き換える（M 相当） */
+  function magOfEnergy(E) { return E > 0 ? (Math.log(E) / Math.LN10 - 4.8) / 1.5 : NaN; }
+  /** J を読みやすい単位で（kJ・MJ・GJ・TJ・PJ・EJ） */
+  function formatEnergy(E) {
+    var u = [['EJ', 1e18], ['PJ', 1e15], ['TJ', 1e12], ['GJ', 1e9], ['MJ', 1e6], ['kJ', 1e3]];
+    for (var i = 0; i < u.length; i++) if (E >= u[i][1]) { var v = E / u[i][1]; return (v >= 100 ? Math.round(v) : v.toPrecision(2)) + u[i][0]; }
+    return Math.round(E) + 'J';
+  }
+  /** 格子でまとめる。xs, ys は同じ座標系（画素）、cell は格子の大きさ。
+   *  戻り値は塊ごとの { x, y（回数で重み付けした重心）, n, E, maxM, maxI（最大の地震の番号） }。エネルギーの小さい順。 */
+  function aggregate(xs, ys, ms, ids, cell) {
+    var map = {}, out = [];
+    for (var j = 0; j < xs.length; j++) {
+      var key = Math.floor(xs[j] / cell) + ',' + Math.floor(ys[j] / cell), g = map[key];
+      if (!g) { g = map[key] = { x: 0, y: 0, n: 0, E: 0, maxM: -Infinity, maxI: -1 }; out.push(g); }
+      g.x += xs[j]; g.y += ys[j]; g.n++; g.E += energyJ(ms[j]);
+      if (ms[j] > g.maxM) { g.maxM = ms[j]; g.maxI = ids[j]; }
+    }
+    out.forEach(function (g) { g.x /= g.n; g.y /= g.n; g.meq = magOfEnergy(g.E); });
+    out.sort(function (a, b) { return a.E - b.E; });
+    return out;
+  }
+  /** 集合マーカーの半径（px）：M 相当が 1 増えるごとに step px 大きく。小さすぎ・大きすぎは切る */
+  function aggRadius(meq, s) { return Math.max(s.aggMin, Math.min(s.aggMax, s.aggMin + (meq - s.aggBase) * s.aggStep)); }
+
+  /** 期間のまとめ（動画・再生の最後に出す）。idx は描く対象の地震（時刻順）。 */
+  function computeStats(ev, idx, t0, t1) {
+    var s = { n: idx.length, days: Math.round((t1 - t0) / DAY), byM: {}, byInt: { 1: 0, 4: 0, 5: 0, 7: 0 },
+              E: 0, max: -1, busiest: null, depth: { shallow: 0, mid: 0, deep: 0, unknown: 0 }, src: [0, 0, 0, 0] };
+    [1, 2, 3, 4, 5, 6, 7].forEach(function (m) { s.byM[m] = 0; });
+    var day = {};
+    for (var k = 0; k < idx.length; k++) {
+      var i = idx[k], m = ev.mag[i], mx = ev.maxi[i], d = ev.dep[i];
+      for (var b = 1; b <= 7; b++) if (m >= b) s.byM[b]++;
+      if (mx >= 1) s.byInt[1]++;
+      if (mx >= 4) s.byInt[4]++;
+      if (mx >= 5) s.byInt[5]++;
+      if (mx >= 7) s.byInt[7]++;
+      s.E += energyJ(m);
+      if (s.max < 0 || m > ev.mag[s.max]) s.max = i;
+      if (isNaN(d)) s.depth.unknown++; else if (d < 30) s.depth.shallow++; else if (d < 100) s.depth.mid++; else s.depth.deep++;
+      s.src[ev.src[i]]++;
+      var dk = formatDate(ev.t[i]);
+      day[dk] = (day[dk] || 0) + 1;
+    }
+    Object.keys(day).forEach(function (dk) { if (!s.busiest || day[dk] > s.busiest.n) s.busiest = { day: dk, n: day[dk] }; });
+    s.meq = magOfEnergy(s.E);
+    return s;
+  }
+
   // ---------------------------------------------------------------- グラフ
   /** 期間を日本時間の日ごとに数える */
   function dailyCounts(ev, idx, t0, t1) {
@@ -354,7 +407,8 @@
     filterEvents: filterEvents, radius: radius, lifeMs: lifeMs, MAG_COLORS: MAG_COLORS,
     DEP_COLORS: DEP_COLORS, DEP_UNKNOWN: DEP_UNKNOWN, INT_STYLES: INT_STYLES, INT_UNKNOWN: INT_UNKNOWN,
     intensityStyle: intensityStyle, colorOf: colorOf, styleOf: styleOf, ageColor: ageColor, alphas: alphas,
-    visibleAt: visibleAt, depthLook: depthLook, rotScreen: rotScreen, rotDelta: rotDelta,
+    visibleAt: visibleAt, depthLook: depthLook, energyJ: energyJ, magOfEnergy: magOfEnergy, formatEnergy: formatEnergy,
+    aggregate: aggregate, aggRadius: aggRadius, computeStats: computeStats, rotScreen: rotScreen, rotDelta: rotDelta,
     screenXAzimuth: screenXAzimuth, dirName: dirName, depthTicks: depthTicks, project0: project0, estIntensity: estIntensity, INT_THRESHOLDS: INT_THRESHOLDS,
     RING_LEVELS: RING_LEVELS, ringRadiiKm: ringRadiiKm, sphereRadiusKm: sphereRadiusKm, geomSphereRadiusKm: geomSphereRadiusKm, surfaceRadiusKm: surfaceRadiusKm, pxPerKm: pxPerKm, dailyCounts: dailyCounts, timeTicks: timeTicks
   };

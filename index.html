@@ -39,6 +39,7 @@ header h1 { font-size: 16px; margin: 0; }
 #attrib a { color: #0b57d0; }
 #sideTab { position: absolute; right: 0; top: 50%; transform: translateY(-50%); z-index: 650; writing-mode: vertical-rl; padding: 10px 3px;
   border-radius: 6px 0 0 6px; border: 1px solid var(--line); border-right: 0; background: var(--panel); color: var(--ink); font-size: 12px; }
+#statsCanvas { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; z-index: 2000; display: none; cursor: pointer; }
 body.sideHidden #app { grid-template-columns: 1fr 0; }
 body.sideHidden #side { display: none; }
 #quakeCanvas { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 450; }
@@ -121,6 +122,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
   <aside id="side">
     <fieldset>
       <legend class="fs">時間</legend>
+      <label>表示
+        <select id="mode"><option value="time">時間に沿って</option><option value="sum">期間の合計（集合マーカー）</option></select></label>
       <div id="playrow">
         <button id="playBtn" class="primary">▶ 再生</button>
         <button id="backBtn" title="1コマ戻る">◀</button>
@@ -189,6 +192,14 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
         <div class="note estOnly">推定は司・翠川(1999)の距離減衰式と翠川ほか(1999)の震度換算による目安です。観測点の震度と突き合わせると、M6.5以上の地震の震度3・4の範囲はおおむね合いますが、M4〜6の地震、震度5弱以上、深発地震（異常震域）では合いません。観測の最大震度は「色の意味＝最大震度」で重ねて比べられます。</div>
         <div class="note geomOnly">図式は揺れの推定ではありません。M で球の大きさを決め、深さで地表の円が小さくなる様子を見るための形です。</div>
       </div>
+      <details id="aggBox" class="sub">
+        <summary>集合マーカー（期間の合計）</summary>
+        <label>マーカーの数字
+          <select id="aggLabel"><option value="meq">M 相当（エネルギーの合計）</option><option value="count">回数</option><option value="energy">エネルギー（J）</option></select></label>
+        <label>まとめる格子の大きさ（px） <input type="number" id="aggCell" step="8" min="16" max="200"></label>
+        <label>M 相当が 1 増えるごとに大きく（px） <input type="number" id="aggStep" step="0.5" min="1" max="20"></label>
+        <div class="note">期間内の地震を、地図の上で近いものどうし格子でまとめます（拡大・縮小するとまとめ直します）。大きさと色は推定エネルギーの合計を M に置き換えた「M 相当」。エネルギーはグーテンベルク・リヒター(1956)の式 log E = 1.5M + 4.8（J）による推定です。M が 1 増えるとエネルギーは約 32 倍なので、合計はほぼ最大の地震で決まります（回数の多さは数字を「回数」にすると見えます）。</div>
+      </details>
       <details id="depthBox" class="sub">
         <summary>奥行き（深さの見え方）</summary>
         <label>3D の効き <span><input type="range" id="vol" min="0" max="1" step="0.05"> <b id="volV"></b></span></label>
@@ -216,9 +227,12 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     </fieldset>
     <fieldset>
       <legend class="fs">動画に書き出す</legend>
-      <div class="note">いま地図に見えている範囲（回していれば回したまま）だけを、期間の最初から最後まで1コマずつ描いて保存します。「グラフは地図に見えている範囲の地震だけ」にしていれば、動画の断面図と M-T 図もその範囲の地震だけになります。書き出し中は地図を動かせません。</div>
+      <div class="note">書き出しを始めると右の操作盤を引っ込め、広がった地図で書き出します（終わると戻します）。いま地図に見えている範囲（回していれば回したまま）だけを、期間の最初から最後まで1コマずつ描いて保存します。「グラフは地図に見えている範囲の地震だけ」にしていれば、動画の断面図と M-T 図もその範囲の地震だけになります。書き出し中は地図を動かせません。</div>
       <label>大きさ <select id="vidScale"><option value="1">画面と同じ</option><option value="2">2倍（高精細）</option></select></label>
       <label class="chk"><input type="checkbox" id="vidXsec" checked> 下に断面図を入れる</label>
+      <label class="chk"><input type="checkbox" id="endSeq"> 再生・動画の最後にまとめを出す</label>
+      <label>まとめ：集合マーカーを出す秒数 <input type="number" id="endSumSec" step="1" min="0" max="30"></label>
+      <label>まとめ：統計を出す秒数 <input type="number" id="endStatsSec" step="1" min="1" max="60"></label>
       <label class="chk"><input type="checkbox" id="vidChart" checked> 下に M-T 図を入れる</label>
       <div style="display:flex;gap:6px;margin-top:6px"><button id="recBtn">● 書き出す</button><button id="recStop" disabled>中止</button></div>
       <div class="note" id="recNote"></div>
@@ -230,6 +244,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     </fieldset>
   </aside>
 </div>
+<canvas id="statsCanvas" title="押すと閉じます"></canvas>
 <script src="vendor/leaflet.min.js"></script>
 <script src="js/core.js"></script>
 <script src="js/app.js"></script>

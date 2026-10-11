@@ -268,6 +268,51 @@ t('地図の回転：画面の位置・ドラッグの向き・画面の横方�
   assert.deepStrictEqual(QC.depthTicks(700), [0, 200, 400, 600]);
   assert.deepStrictEqual(QC.depthTicks(60), [0, 10, 20, 30, 40, 50, 60]);
 });
+t('エネルギー：M が 1 増えると約 32 倍、2 増えると 1000 倍。合計を M 相当に戻せる', function () {
+  var near = function (a, b, e) { return Math.abs(a - b) < (e || 1e-9); };
+  assert.ok(near(QC.energyJ(0), Math.pow(10, 4.8)));
+  assert.ok(near(QC.energyJ(7) / QC.energyJ(6), Math.pow(10, 1.5)));
+  assert.ok(near(QC.energyJ(8) / QC.energyJ(6), 1000, 1e-6));
+  assert.ok(near(QC.magOfEnergy(QC.energyJ(7.6)), 7.6));
+  assert.ok(near(QC.magOfEnergy(1000 * QC.energyJ(5)), 7));        // M5 が 1000 個で M7 相当
+  assert.ok(isNaN(QC.magOfEnergy(0)));
+  assert.strictEqual(QC.formatEnergy(2.5e15), '2.5PJ');
+  assert.strictEqual(QC.formatEnergy(3.2e18), '3.2EJ');
+  assert.strictEqual(QC.formatEnergy(150e12), '150TJ');
+});
+t('集計：格子でまとめ、回数・エネルギー・最大の地震・重心が合う', function () {
+  var g = QC.aggregate([1, 2, 30, 31], [1, 3, 1, 1], [3, 5, 4, 4], [10, 11, 12, 13], 20);
+  assert.strictEqual(g.length, 2);
+  var a = g.filter(function (x) { return x.n === 2 && x.maxM === 5; })[0], b = g.filter(function (x) { return x.maxM === 4; })[0];
+  assert.ok(a && b);
+  assert.strictEqual(a.maxI, 11);
+  assert.strictEqual(a.x, 1.5); assert.strictEqual(a.y, 2);
+  assert.ok(Math.abs(a.E - (QC.energyJ(3) + QC.energyJ(5))) < 1);
+  assert.ok(Math.abs(b.meq - QC.magOfEnergy(2 * QC.energyJ(4))) < 1e-9);
+  assert.ok(g[0].E <= g[1].E);                                      // 小さい順（大きいものを最後＝上に描く）
+  var s = { aggMin: 6, aggMax: 40, aggBase: 2, aggStep: 5 };
+  assert.strictEqual(QC.aggRadius(1, s), 6);
+  assert.strictEqual(QC.aggRadius(4, s), 16);
+  assert.strictEqual(QC.aggRadius(12, s), 40);
+});
+t('まとめ：回数・最大・震度・最多の日・深さ', function () {
+  var ev = evOf([
+    '2024-01-01T08:00:00.0,35,135,10,3.2,1,P,,',
+    '2024-01-01T23:59:59.0,35,135,50,5.0,4,P,,',
+    '2024-01-02T00:00:00.0,35,135,150,7.6,7,P,,',      // 日本時間で翌日
+    '2024-01-02T01:00:00.0,35,135,,1.5,,P,,',
+    '2024-01-02T02:00:00.0,35,135,10,2.0,5-,P,,'       // 震度5弱ちょうど（5弱以上に入り、5強以上には入らない）
+  ]);
+  var f = QC.filterEvents(ev, S, -Infinity, Infinity), st = QC.computeStats(ev, f.idx, QC.dateToMs('2024-01-01'), QC.dateToMs('2024-01-03'));
+  assert.strictEqual(st.n, 5);
+  assert.strictEqual(st.days, 2);
+  assert.strictEqual(st.byM[3], 3); assert.strictEqual(st.byM[5], 2); assert.strictEqual(st.byM[7], 1); assert.strictEqual(st.byM[1], 5);
+  assert.ok(Math.abs(ev.mag[st.max] - 7.6) < 1e-6);   // M は Float32 で持つ
+  assert.deepStrictEqual(st.byInt, { 1: 4, 4: 3, 5: 2, 7: 1 });
+  assert.deepStrictEqual(st.busiest, { day: '2024-01-02', n: 3 });   // 日本時間で区切る（UTC なら 1/1 が 4 件になる）
+  assert.deepStrictEqual(st.depth, { shallow: 2, mid: 1, deep: 1, unknown: 1 });
+  assert.ok(Math.abs(st.meq - QC.magOfEnergy(QC.energyJ(3.2) + QC.energyJ(5) + QC.energyJ(7.6) + QC.energyJ(1.5) + QC.energyJ(2))) < 1e-6);
+});
 t('地図の座標（Web メルカトル）', function () {
   var p = QC.project0(0, 0);
   assert.deepStrictEqual(p, [128, 128]);
