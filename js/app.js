@@ -560,7 +560,8 @@
     CATALOG_CHANGES.forEach(function (c) { var t = QC.dateToMs(c.t); if (t > t0 && t < t1) notes.push(c.note); });
     if (t1 > R.last + DAY) notes.push('期間の終わりはデータより後です（データは ' + QC.formatDateTime(R.last) + ' まで）');
     $('periodNote').innerHTML = notes.map(function (n) { return '<span class="warn">' + n + '</span>'; }).join('<br>');
-    var T = st.hashT && st.hashT >= t0 && st.hashT <= t1 ? st.hashT : t0;
+    // 開いたときは期間の最後（最新の状態）。再生を押すと最初から始まる
+    var T = st.hashT && st.hashT >= t0 && st.hashT <= t1 ? st.hashT : Math.min(t1, st.dataEnd);
     st.hashT = null;
     st.T = T; syncSlider();
     writeHash();
