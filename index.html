@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>地震の時系列地図</title>
+<link rel="stylesheet" href="vendor/leaflet.min.css">
+<style>
+:root {
+  --bg: #f4f5f7; --panel: #ffffff; --ink: #1d2433; --sub: #5b6475; --line: #d9dde5;
+  --accent: #1e63d6; --warn: #b3261e; --chart-bg: #ffffff; --cursor: #d81b60;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15181e; --panel: #1f232b; --ink: #e8ebf1; --sub: #9aa3b2; --line: #343a46;
+    --accent: #6ea0ff; --warn: #ff8a80; --chart-bg: #1a1d24; --cursor: #ff6fa5;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15181e; --panel: #1f232b; --ink: #e8ebf1; --sub: #9aa3b2; --line: #343a46;
+  --accent: #6ea0ff; --warn: #ff8a80; --chart-bg: #1a1d24; --cursor: #ff6fa5;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+  font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; font-size: 14px; }
+#app { display: grid; grid-template-columns: 1fr 320px; grid-template-rows: auto 1fr auto; height: 100%; }
+header { grid-column: 1 / 3; display: flex; gap: 12px; align-items: baseline; padding: 6px 12px;
+  border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+header h1 { font-size: 16px; margin: 0; }
+#status { color: var(--sub); font-size: 12px; }
+#status.err { color: var(--warn); }
+#mapwrap { position: relative; min-height: 300px; }
+#map { position: absolute; inset: 0; background: #cfe3f2; }
+#quakeCanvas { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 450; }
+.ov { position: absolute; z-index: 500; pointer-events: none; }
+#clock { left: 12px; top: 10px; font-size: 26px; font-weight: 700; color: #1d2433;
+  text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 6px #fff; }
+#clockNote { left: 14px; top: 46px; font-size: 12px; color: #1d2433; text-shadow: 0 0 3px #fff, 0 0 3px #fff; }
+#legend { left: 10px; top: 72px; background: rgba(255,255,255,.88); color: #1d2433; border-radius: 6px;
+  padding: 6px 8px; font-size: 12px; line-height: 1.25; }
+#legend .row { display: flex; align-items: center; gap: 6px; height: 20px; }
+#legend .sw { display: inline-block; border-radius: 50%; border: 1.5px solid; }
+#legend .ttl { font-weight: 700; margin-bottom: 2px; }
+#tip { position: absolute; z-index: 600; background: rgba(20,24,32,.92); color: #fff; font-size: 12px;
+  padding: 5px 7px; border-radius: 5px; pointer-events: none; white-space: nowrap; display: none; }
+#side { grid-row: 2 / 4; grid-column: 2; overflow-y: auto; background: var(--panel); border-left: 1px solid var(--line);
+  padding: 8px 12px 24px; }
+#charts { grid-column: 1; background: var(--chart-bg); border-top: 1px solid var(--line); }
+#charts canvas { display: block; width: 100%; cursor: pointer; touch-action: none; }
+#mtChart { height: 110px; } #cntChart { height: 70px; }
+fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 10px; padding: 6px 8px 8px; }
+legend.fs { font-weight: 700; font-size: 13px; padding: 0 4px; }
+.sphereOnly { display: none; border-left: 3px solid var(--line); padding-left: 8px; margin: 4px 0 8px; }
+body.sphere .sphereOnly { display: block; }
+.geomOnly { display: none; } body.sphereGeom .geomOnly { display: block; } body.sphereGeom .estOnly { display: none; }
+label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 5px 0; }
+label.chk { justify-content: flex-start; }
+input[type=number] { width: 72px; }
+input[type=date] { width: 140px; }
+select, input, button { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line);
+  border-radius: 4px; padding: 2px 4px; }
+button { cursor: pointer; padding: 4px 10px; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+#playrow { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+#playBtn { min-width: 64px; }
+#timeSl { width: 100%; }
+.note { color: var(--sub); font-size: 12px; line-height: 1.5; }
+.warn { color: var(--warn); }
+#dropped { font-size: 12px; color: var(--sub); line-height: 1.5; }
+.leaflet-container { font: inherit; }
+@media (max-width: 760px) {
+  #app { grid-template-columns: 1fr; grid-template-rows: auto 55vh auto auto; height: auto; }
+  header { grid-column: 1; }
+  #side { grid-row: 4; grid-column: 1; border-left: 0; border-top: 1px solid var(--line); overflow: visible; }
+  #charts { grid-row: 3; }
+  #clock { font-size: 20px; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>地震の時系列地図</h1>
+    <span id="status">読み込み中…</span>
+  </header>
+  <div id="mapwrap">
+    <div id="map"></div>
+    <canvas id="quakeCanvas"></canvas>
+    <div id="clock" class="ov"></div>
+    <div id="clockNote" class="ov"></div>
+    <div id="legend" class="ov"></div>
+    <div id="tip"></div>
+  </div>
+  <div id="charts">
+    <canvas id="mtChart" height="110"></canvas>
+    <canvas id="cntChart" height="70"></canvas>
+  </div>
+  <aside id="side">
+    <fieldset>
+      <legend class="fs">時間</legend>
+      <div id="playrow">
+        <button id="playBtn" class="primary">▶ 再生</button>
+        <button id="backBtn" title="1コマ戻る">◀</button>
+        <button id="fwdBtn" title="1コマ進む">▶</button>
+        <button id="startBtn" title="期間の最初へ">⏮</button>
+      </div>
+      <input type="range" id="timeSl" min="0" max="100000" value="0" step="1">
+      <label>1コマの刻み
+        <select id="step">
+          <option value="600000">10分</option><option value="3600000">1時間</option>
+          <option value="10800000">3時間</option><option value="21600000">6時間</option>
+          <option value="43200000">12時間</option><option value="86400000">1日</option>
+          <option value="604800000">7日</option>
+        </select></label>
+      <label>速さ（コマ／秒）
+        <select id="fps"><option>5</option><option>10</option><option>15</option><option>30</option><option>60</option></select></label>
+      <label>期間 から <input type="date" id="t0"></label>
+      <label>まで <input type="date" id="t1"></label>
+      <div class="note" id="periodNote"></div>
+      <div class="note">ドラッグ中もつまみの時刻で描きます。グラフを押すとその時刻へ移ります。</div>
+    </fieldset>
+    <fieldset>
+      <legend class="fs">描く地震</legend>
+      <label>M の下限 <input type="number" id="magMin" step="0.5" min="-2" max="8"></label>
+      <label>最大震度の下限
+        <select id="intMin"><option value="0">指定しない</option><option value="1">震度1以上</option>
+          <option value="3">震度3以上</option><option value="5">震度5弱以上</option><option value="7">震度6弱以上</option></select></label>
+      <label>深さ（km） <span><input type="number" id="depMin" min="0" max="1000" step="10"> 〜 <input type="number" id="depMax" min="0" max="1000" step="10"></span></label>
+      <label class="chk"><input type="checkbox" id="lowFreq"> 低周波地震を含める</label>
+      <label class="chk"><input type="checkbox" id="reference"> 精度の低い震源（参考）を含める</label>
+      <div id="dropped"></div>
+    </fieldset>
+    <fieldset>
+      <legend class="fs">見た目</legend>
+      <label>形
+        <select id="shape"><option value="circle">円（大きさ＝M）</option><option value="sphere">球（震源の深さを見る）</option></select></label>
+      <div class="sphereOnly">
+        <label>球の大きさの決め方
+          <select id="sphereKind"><option value="est">推定（震度の境目が届く距離）</option><option value="geom">図式（M だけで決める）</option></select></label>
+        <div class="geomOnly">
+          <label>M5 の球の半径（km） <input type="number" id="sphereR5" step="5" min="1" max="500"></label>
+          <label>M が 1 増えるごとに（倍） <input type="number" id="sphereGrowth" step="0.1" min="1" max="5"></label>
+        </div>
+        <div class="estOnly">
+        <label>球の境目の震度
+          <select id="sphereInt"><option value="3">震度3</option><option value="4">震度4</option><option value="5-">震度5弱</option><option value="5+">震度5強</option><option value="6-">震度6弱</option></select></label>
+        <label>地盤の増幅（倍） <input type="number" id="sphereAmp" step="0.1" min="0.5" max="4"></label>
+        </div>
+        <label>外の輪が最も薄くなる深さ（km） <input type="number" id="sphereFade" step="50" min="10" max="1000"></label>
+        <div class="note estOnly">推定は司・翠川(1999)の距離減衰式と翠川ほか(1999)の震度換算による目安です。観測点の震度と突き合わせると、M6.5以上の地震の震度3・4の範囲はおおむね合いますが、M4〜6の地震、震度5弱以上、深発地震（異常震域）では合いません。観測の最大震度は「色の意味＝最大震度」で重ねて比べられます。</div>
+        <div class="note geomOnly">図式は揺れの推定ではありません。M で球の大きさを決め、深さで地表の円が小さくなる様子を見るための形です。</div>
+      </div>
+      <label>色の意味
+        <select id="colorMode"><option value="mag">M（規模）</option><option value="depth">深さ</option><option value="maxi">最大震度</option><option value="age">経過時間</option></select></label>
+      <label>大きさの尺度
+        <select id="sizeScale"><option value="exp">指数（Mが1増えるごとに×倍率）</option><option value="lin">直線</option></select></label>
+      <label>M1 の半径（px） <input type="number" id="r1" step="0.25" min="0.25" max="10"></label>
+      <label>倍率（M が 1 増えるごと） <input type="number" id="sizeGrowth" step="0.1" min="1" max="3"></label>
+      <label>残る時間：M1 で（日） <input type="number" id="life1" step="0.5" min="0.01" max="365"></label>
+      <label>M が 1 増えるごとに（倍） <input type="number" id="lifeGrowth" step="0.1" min="1" max="5"></label>
+      <label>残る時間の上限（日） <input type="number" id="lifeMax" step="10" min="1" max="3650"></label>
+      <label class="chk"><input type="checkbox" id="ripple"> 発生の瞬間に波紋を出す</label>
+      <label>波紋を出す M の下限 <input type="number" id="rippleMinM" step="0.5" min="-1" max="8"></label>
+      <label>下地
+        <select id="base"><option value="pale">淡色地図</option><option value="blank">白地図</option><option value="photo">写真</option></select></label>
+    </fieldset>
+    <fieldset>
+      <legend class="fs">動画に書き出す</legend>
+      <div class="note">いま地図に見えている範囲で、期間の最初から最後までを1コマずつ描いて保存します。書き出し中は地図を動かせません。</div>
+      <label>大きさ <select id="vidScale"><option value="1">画面と同じ</option><option value="2">2倍（高精細）</option></select></label>
+      <label class="chk"><input type="checkbox" id="vidChart" checked> 下に M-T 図を入れる</label>
+      <div style="display:flex;gap:6px;margin-top:6px"><button id="recBtn">● 書き出す</button><button id="recStop" disabled>中止</button></div>
+      <div class="note" id="recNote"></div>
+    </fieldset>
+    <fieldset>
+      <legend class="fs">データ</legend>
+      <div class="note" id="dataNote"></div>
+      <div class="note">出典：気象庁「震源データ」（確定）・「震源リスト」（速報）・「震度データベース」・「地震情報」。速報の値は後で変わることがあります。地図：地理院タイル。</div>
+    </fieldset>
+  </aside>
+</div>
+<script src="vendor/leaflet.min.js"></script>
+<script src="js/core.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "_説明": "取得の設定。GitHub の画面からこのファイルを直接書き換えてよい。",
+  "refetch_days": 10,
+  "_refetch_days": "毎回取り直す速報の日数（後から書き換わっていないかを確かめる）",
+  "request_interval_sec": 1.0,
+  "_request_interval_sec": "気象庁へ続けて問い合わせるときの間隔（秒）",
+  "user_agent": "quake-timeline (personal research; GitHub Actions)"
+}
