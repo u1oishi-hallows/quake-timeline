@@ -295,6 +295,58 @@ t('集計：格子でまとめ、回数・エネルギー・最大の地震・�
   assert.strictEqual(QC.aggRadius(4, s), 16);
   assert.strictEqual(QC.aggRadius(12, s), 40);
 });
+t('k-means（D 次元）：離れた集まりを分け、マーカーは実際の地震の位置。同じ種なら同じ結果。4 次元では時間で分かれる', function () {
+  // 2 次元：左（x≈0）に 30 個、右（x≈1000）に 20 個。右側は 2 つの小さな集まり（y=0 と y=40）
+  var P = [], ms = [], ids = [];
+  for (var j = 0; j < 30; j++) { P.push(j % 6, Math.floor(j / 6)); ms.push(2); ids.push(j); }
+  for (j = 0; j < 20; j++) { P.push(1000 + (j % 4), j < 10 ? 0 : 40); ms.push(j === 15 ? 6 : 3); ids.push(100 + j); }
+  P = Float64Array.from(P);
+  var C = QC.kmeans(P, 2, 2, { seed: 3 }), g = QC.kmeansClusters(P, 2, ms, ids, C);
+  assert.strictEqual(g.length, 2);
+  var left = g.filter(function (q) { return q.n === 30; })[0], right = g.filter(function (q) { return q.n === 20; })[0];
+  assert.ok(left && right);
+  assert.strictEqual(right.maxI, 115);
+  assert.ok(Math.abs(right.meq - QC.magOfEnergy(19 * QC.energyJ(3) + QC.energyJ(6))) < 1e-9);
+  // 右の中心は 2 つの小さな集まりのあいだ（y≈20、地震の無い所）。マーカーは実際の点（y=0 か 40）
+  assert.ok(Math.abs(right.c[1] - 20) < 1e-9);
+  var my = P[right.mi * 2 + 1];
+  assert.ok(my === 0 || my === 40);
+  assert.ok(right.rms >= 20 && right.rms < 21);
+  // マーカーの地震は、塊のどの地震よりも中心に近い（同じ距離も可）
+  g.forEach(function (q) {
+    var d = function (i) { return Math.pow(P[i * 2] - q.c[0], 2) + Math.pow(P[i * 2 + 1] - q.c[1], 2); };
+    Array.from(q.members).forEach(function (m) { assert.ok(d(q.mi) <= d(m) + 1e-9); });
+    assert.ok(d(q.mi) < d(q.members[0]) || q.mi === q.members[0] || d(q.mi) === d(q.members[0]));
+  });
+  assert.notStrictEqual(left.mi, left.members[0]);              // 左の塊の最初の点（0,0）は中心（2.5, 2）から遠い
+  // 前の中心から続ける：答えが 2 通りありうる並び（3 つの集まりを 2 つに）では、どちらから始めてもそこに留まる
+  var T3 = [];
+  [0, 100, 200].forEach(function (x0) { for (var q = 0; q < 10; q++) T3.push(x0 + (q % 2), Math.floor(q / 2)); });
+  T3 = Float64Array.from(T3);
+  var mid = function (a, b) { return [(a + b) / 2 + 0.5, 2]; };
+  var initA = Float64Array.from([0.5, 2].concat(mid(100, 200))), initB = Float64Array.from(mid(0, 100).concat([200.5, 2]));
+  assert.deepStrictEqual(Array.from(QC.kmeans(T3, 2, 2, { init: initA, iters: 5 })), Array.from(initA));
+  assert.deepStrictEqual(Array.from(QC.kmeans(T3, 2, 2, { init: initB, iters: 5 })), Array.from(initB));
+  assert.strictEqual(right.members.length, 20);
+  assert.deepStrictEqual(Array.from(QC.kmeans(P, 2, 2, { seed: 3 })), Array.from(C));          // 同じ種なら同じ
+  assert.deepStrictEqual(Array.from(QC.kmeans(P, 2, 2, { init: C, iters: 3 })), Array.from(C)); // 収まった中心は動かない
+  assert.strictEqual(QC.kmeans(Float64Array.from([1, 2, 3, 4]), 2, 5).length, 4);              // k が点より多くても壊れない
+  assert.deepStrictEqual(QC.kmeansClusters(new Float64Array(0), 2, [], [], new Float64Array(0)), []);
+  var g3 = QC.kmeansClusters(P, 2, ms, ids, QC.kmeans(P, 2, 3, { seed: 3 }));
+  assert.deepStrictEqual(g3.map(function (q) { return q.n; }).sort(function (a, b) { return a - b; }), [10, 10, 30]);
+  // 4 次元（x, y, z, t）：同じ場所・同じ深さでも、時間が離れていれば別の塊になる
+  var Q = [];
+  for (j = 0; j < 10; j++) Q.push(0, 0, 10, j);          // 時刻 0〜9
+  for (j = 0; j < 10; j++) Q.push(0, 0, 10, 500 + j);    // 同じ場所で時刻 500〜509
+  Q = Float64Array.from(Q);
+  var g4 = QC.kmeansClusters(Q, 4, new Array(20).fill(3), new Array(20).fill(0).map(function (_, i) { return i; }), QC.kmeans(Q, 4, 2, { seed: 1 }));
+  assert.deepStrictEqual(g4.map(function (q) { return q.n; }), [10, 10]);
+  assert.ok(g4.every(function (q) { var t0 = Q[q.members[0] * 4 + 3]; return Array.from(q.members).every(function (m) { return Math.abs(Q[m * 4 + 3] - t0) < 20; }); }));
+  // 3 次元（深さを含む）：同じ震央でも深さが離れていれば別の塊
+  var R = Float64Array.from([0, 0, 5, 1, 0, 6, 0, 1, 5, 0, 0, 300, 1, 0, 301, 0, 1, 299]);
+  var g5 = QC.kmeansClusters(R, 3, [3, 3, 3, 3, 3, 3], [0, 1, 2, 3, 4, 5], QC.kmeans(R, 3, 2, { seed: 1 }));
+  assert.deepStrictEqual(g5.map(function (q) { return Array.from(q.members).sort().join(); }).sort(), ['0,1,2', '3,4,5']);
+});
 t('時間の幅で切り出す：開始は含まず、終わり（T）は含む', function () {
   var ev = evOf(['2024-01-01T00:00:00.0,35,135,10,2,,P,,', '2024-01-02T00:00:00.0,35,135,10,2,,P,,',
                  '2024-01-03T00:00:00.0,35,135,10,2,,P,,', '2024-01-04T00:00:00.0,35,135,10,2,,P,,']);

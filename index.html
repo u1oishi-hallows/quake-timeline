@@ -67,7 +67,7 @@ details.sub[open] > summary { margin-bottom: 4px; }
 body:not(.circle) #depthBox { opacity: .55; }
 .sphereOnly { display: none; border-left: 3px solid var(--line); padding-left: 8px; margin: 4px 0 8px; }
 body.sphere .sphereOnly { display: block; }
-.aggOnly, .taggOnly { display: none; } body.agg .aggOnly { display: block; } body.tagg .taggOnly { display: flex; }
+body:not(.agg) .aggOnly, body:not(.tagg) .taggOnly, body:not(.km) .kmOnly, body:not(.grid) .gridOnly { display: none !important; }
 #xsecBox { position: relative; }
 #xsecBtns { position: absolute; right: 4px; top: 1px; display: flex; gap: 2px; }
 #xsecBtns button { font-size: 11px; padding: 0 6px; line-height: 15px; background: var(--panel); }
@@ -133,8 +133,14 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
       <label>表示
         <select id="mode"><option value="time">時間に沿って（1つずつ）</option><option value="timeAgg">時間に沿って（集合マーカー）</option><option value="sum">期間の合計（集合マーカー）</option></select></label>
       <div class="aggOnly">
-        <label>まとめる細かさ <span class="note" style="margin:0">細かい</span><input type="range" id="aggCell" min="16" max="160" step="4" style="width:110px"><span class="note" style="margin:0">粗い</span></label>
-        <label class="taggOnly">まとめる時間の幅
+        <label>まとめ方
+          <select id="aggMethod"><option value="kmeans">k-means（震源の空間・時間）</option><option value="grid">格子（地図の上）</option></select></label>
+        <label class="kmOnly">マーカーの数（k） <span><input type="range" id="aggK" min="3" max="150" step="1" style="width:110px"> <b id="aggKV"></b></span></label>
+        <label class="kmOnly">深さの重み（1＝水平と同じ km） <input type="number" id="kmDepthW" step="0.5" min="0" max="10"></label>
+        <label class="kmOnly taggOnly">時間の重み：1日を何 km とみなすか <input type="number" id="kmKmPerDay" step="0.5" min="0" max="200"></label>
+        <div class="note kmOnly">静止画（期間の合計）は震源の位置（東西・南北・深さ）の3次元、時間に沿った再生は時間も加えた4次元で、地図に見えている範囲の地震を k 個にまとめます（地図を動かすとまとめ直します）。マーカーは塊の中心にいちばん近い実際の震央に置き、薄い点線の輪は塊の広がりです。再生中は、その時刻までに起きた地震だけで大きさと位置を決めます。ただし塊の分け方は期間全体を見て決めているので、再生は「振り返り」の表示です。深さ不明の地震はまとめに入れません。</div>
+        <label class="gridOnly">まとめる細かさ <span class="note" style="margin:0">細かい</span><input type="range" id="aggCell" min="16" max="160" step="4" style="width:110px"><span class="note" style="margin:0">粗い</span></label>
+        <label class="gridOnly taggOnly">まとめる時間の幅
           <select id="aggWindow"><option value="1">直近1日</option><option value="7">直近7日</option><option value="30">直近30日</option><option value="cum">期間の始めから（累積）</option></select></label>
       </div>
       <div id="playrow">

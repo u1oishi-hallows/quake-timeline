@@ -22,7 +22,7 @@
     ripple: true, rippleMinM: 3, rippleFrames: 12,
     shape: 'circle', sphereKind: 'est', sphereInt: '4', sphereAmp: 1.31, sphereFade: 300, sphereR5: 30, sphereGrowth: 2,
     ringFrom: '3', ringMinM: 3.5,
-    mode: 'time', aggWindow: '7', xsSize: 'M', aggLabel: 'meq', aggCell: 56, aggStep: 5.5, aggMin: 7, aggMax: 48, aggBase: 2,
+    mode: 'time', aggWindow: '7', aggMethod: 'kmeans', aggK: 40, kmDepthW: 1, kmKmPerDay: 3, xsSize: 'M', aggLabel: 'meq', aggCell: 56, aggStep: 5.5, aggMin: 7, aggMax: 48, aggBase: 2,
     endSeq: true, endSumSec: 3, endStatsSec: 7,
     bearing: 0, xsDepth: 'equal', showXsec: true, showMt: true, chartView: true,
     vol: 0.5, viewH: 100, dShrink: true, dBlur: 1, dHaze: 1, hazeMin: 0.25, keepBig: true, keepBigM: 7,
@@ -32,9 +32,9 @@
   };
   var NUM = ['magMin', 'intMin', 'depMin', 'depMax', 'r1', 'sizeGrowth', 'life1', 'lifeGrowth', 'lifeMax',
              'rippleMinM', 'step', 'fps', 'sphereAmp', 'sphereFade', 'sphereR5', 'sphereGrowth', 'ringMinM',
-             'vol', 'viewH', 'dBlur', 'dHaze', 'hazeMin', 'keepBigM', 'bearing', 'aggCell', 'aggStep', 'endSumSec', 'endStatsSec'];
+             'vol', 'viewH', 'dBlur', 'dHaze', 'hazeMin', 'keepBigM', 'bearing', 'aggK', 'kmDepthW', 'kmKmPerDay', 'aggCell', 'aggStep', 'endSumSec', 'endStatsSec'];
   var BOOL = ['lowFreq', 'reference', 'ripple', 'dShrink', 'keepBig', 'showXsec', 'showMt', 'chartView', 'endSeq'];
-  var STR = ['colorMode', 'sizeScale', 'base', 't0', 't1', 'shape', 'sphereInt', 'sphereKind', 'ringFrom', 'xsDepth', 'mode', 'aggLabel', 'aggWindow', 'xsSize'];
+  var STR = ['colorMode', 'sizeScale', 'base', 't0', 't1', 'shape', 'sphereInt', 'sphereKind', 'ringFrom', 'xsDepth', 'mode', 'aggLabel', 'aggWindow', 'xsSize', 'aggMethod'];
 
   var S = Object.assign({}, DEFAULTS);
   var st = {
@@ -89,7 +89,7 @@
     else if (RESPHERE.indexOf(k) >= 0) { computeSpheres(); }
     if (k === 'shape' || k === 'sphereKind' || k === 'vol') applyShapeClass();
     if (k === 'bearing') { layoutRot(); scheduleViewIdx(); }
-    if (k === 'mode' || k === 'aggCell') { st.agg = null; cancelEnding(true); applyShapeClass(); }
+    if (k === 'mode' || k === 'aggCell' || k === 'aggMethod' || k === 'aggK') { st.agg = null; cancelEnding(true); applyShapeClass(); }
     if (k === 'mode' && S.mode === 'sum' && st.playing) play(false);
     if (k === 'xsSize') applyXsecSize();
     if (k === 'showXsec' || k === 'showMt') applyChartVisibility();
@@ -112,6 +112,7 @@
     var c = $('quakeCanvas'), wrap = $('mapwrap');
     map.on('move zoomend resize viewreset', function () { sizeCanvas(); drawMap(); });
     map.on('moveend zoomend resize', scheduleViewIdx);
+    map.on('moveend zoomend resize', function () { st.viewVer = (st.viewVer || 0) + 1; if (S.mode !== 'time' && S.aggMethod === 'kmeans') drawMap(); });
     map.on('zoomstart', function () { c.style.visibility = 'hidden'; });
     map.on('zoomend', function () { c.style.visibility = ''; });
     wrap.addEventListener('mousemove', onHover);
@@ -140,6 +141,7 @@
     $('northSvg').style.transform = 'rotate(' + S.bearing + 'deg)';
     if ($('bearingV')) $('bearingV').textContent = S.bearing + '°';
     if (noMap || !map) return;
+    st.viewVer = (st.viewVer || 0) + 1;
     map.invalidateSize();                 // 中心は保ったまま大きさだけ変わる
     var r = rotated();                    // 回している間は、拡大の基準を地図の中心にする（マウスの位置は回転を考えないため）
     map.options.scrollWheelZoom = r ? 'center' : true;
@@ -241,6 +243,9 @@
   function applyShapeClass() {
     document.body.classList.toggle('agg', S.mode !== 'time');
     document.body.classList.toggle('tagg', S.mode === 'timeAgg');
+    document.body.classList.toggle('km', S.aggMethod === 'kmeans');
+    document.body.classList.toggle('grid', S.aggMethod !== 'kmeans');
+    if ($('aggKV')) $('aggKV').textContent = S.aggK;
     document.body.classList.toggle('circle', S.shape === 'circle');
     if ($('volV')) $('volV').textContent = Math.round(S.vol * 100) + '%';
     document.body.classList.toggle('sphere', S.shape === 'sphere');
@@ -314,7 +319,7 @@
     } else {
       var di = dayInfo(st.T);
       $('clock').textContent = QC.formatClock(st.T, S.step);
-      $('clockNote').textContent = (S.mode === 'timeAgg' ? '集合マーカー：' + windowText() + 'の合計　' : '') + di.text;
+      $('clockNote').textContent = (S.mode === 'timeAgg' ? '集合マーカー：' + (S.aggMethod === 'kmeans' ? 'k-means（xyzt）' : windowText() + 'の合計') + '　' : '') + di.text;
     }
   }
   function drawMap() {
@@ -359,7 +364,7 @@
   function windowText() { return S.aggWindow === 'cum' ? '期間の始めから' : '直近' + S.aggWindow + '日'; }
   /** 時間に沿った集合マーカー：時刻 T までの「まとめる時間の幅」の地震を格子でまとめ、発生の瞬間には波紋を出す */
   function drawTimeAgg(ctx, T, scale, W, H) {
-    var r = windowRange(T), drawn = drawAggregate(ctx, scale, W, H, r[0], r[1]);
+    var r = windowRange(T), drawn = S.aggMethod === 'kmeans' ? drawKm(ctx, scale, W, H, T) : drawAggregate(ctx, scale, W, H, r[0], r[1]);
     if (S.ripple) {
       var rippleDur = S.rippleFrames * S.step, rr = QC.idxRange(st.ev, st.f.idx, T - rippleDur, T), proj = makeProj(scale);
       for (var k = rr[0]; k < rr[1]; k++) {
@@ -381,12 +386,118 @@
     return g.meq.toFixed(1);
   }
   /** 集合マーカーの円を 1 つ描く（数字は drawAggLabel で、あとからまとめて） */
-  function drawAggMarker(ctx, x, y, r, g, scale) {
-    var col = QC.colorOf('mag', g.meq, 0, 0);
+  function drawAggMarker(ctx, x, y, r, g, scale, alpha) {
+    var col = QC.colorOf('mag', g.meq, 0, 0), a = alpha == null ? 1 : alpha;
     ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI);
-    ctx.globalAlpha = 0.62; ctx.fillStyle = col; ctx.fill();
-    ctx.globalAlpha = 0.95; ctx.lineWidth = 1.6 * scale; ctx.strokeStyle = '#ffffff'; ctx.stroke();
+    ctx.globalAlpha = 0.62 * a; ctx.fillStyle = col; ctx.fill();
+    ctx.globalAlpha = 0.95 * a; ctx.lineWidth = 1.6 * scale; ctx.strokeStyle = '#ffffff'; ctx.stroke();
     ctx.globalAlpha = 1;
+  }
+
+  // ---------------------------------------------------------------- k-means（震源の空間 xyz、再生は xyzt）
+  var KM_SAMPLE = 20000;   // 中心を求めるのに使う地震の数の上限（多いときは等間隔に間引く。割り当ては全部）
+  /** 地図に見えている範囲の地震を k-means でまとめる（dim 3＝xyz、4＝xyzt）。地図を動かし終えたときと設定を変えたときだけ */
+  function kmClusters(dim) {
+    var key = [dim, S.aggK, S.kmDepthW, S.kmKmPerDay, st.fVer, st.viewVer, st.t0].join('|');
+    if (st.km && st.km.key === key) return st.km;
+    var ev = st.ev, proj = makeProj(1), v = viewSize(), list = [], noDep = 0, idx = st.f.idx;
+    for (var q = 0; q < idx.length; q++) {
+      var i = idx[q], p = proj(i);
+      if (p[0] < 0 || p[0] > v.W || p[1] < 0 || p[1] > v.H) continue;
+      if (isNaN(ev.dep[i])) { noDep++; continue; }
+      list.push(i);
+    }
+    var n = list.length, P = new Float64Array(n * dim), ms = new Float64Array(n), ids = new Int32Array(n), RAD = Math.PI / 180;
+    for (q = 0; q < n; q++) {
+      i = list[q];
+      // 東西・南北は km（東経137度を中心にした正弦図法。日本の範囲なら距離の歪みは小さい）、深さは km × 重み、時間は日 × 1日あたりの km
+      P[q * dim] = (ev.lon[i] - 137) * 111.32 * Math.cos(ev.lat[i] * RAD);
+      P[q * dim + 1] = ev.lat[i] * 110.574;
+      P[q * dim + 2] = Math.max(ev.dep[i], 0) * S.kmDepthW;
+      if (dim === 4) P[q * dim + 3] = (ev.t[i] - st.t0) / DAY * S.kmKmPerDay;
+      ms[q] = ev.mag[i]; ids[q] = i;
+    }
+    var stride = Math.max(1, Math.ceil(n / KM_SAMPLE)), SP = P;
+    if (stride > 1) {
+      var m = Math.floor(n / stride); SP = new Float64Array(m * dim);
+      for (q = 0; q < m; q++) for (var j = 0; j < dim; j++) SP[q * dim + j] = P[q * stride * dim + j];
+    }
+    var C = QC.kmeans(SP, dim, S.aggK, { seed: 7, iters: 30 }), cl = QC.kmeansClusters(P, dim, ms, ids, C);
+    cl.forEach(function (g) {
+      // 塊の広がり（東西・南北だけ、km）と、再生用の「その時刻までの」累積（members は時刻順）
+      var ss = 0, L = g.members.length, best = Infinity, bi = -1, mx = -Infinity, mxi = -1, E = 0;
+      g.times = new Float64Array(L); g.cumE = new Float64Array(L); g.bestAt = new Int32Array(L); g.maxAt = new Int32Array(L);
+      for (var a = 0; a < L; a++) {
+        var pt = g.members[a], dx = P[pt * dim] - g.c[0], dy = P[pt * dim + 1] - g.c[1], d = 0;
+        ss += dx * dx + dy * dy;
+        for (var b = 0; b < dim; b++) { var e = P[pt * dim + b] - g.c[b]; d += e * e; }
+        if (d < best) { best = d; bi = ids[pt]; }
+        if (ms[pt] > mx) { mx = ms[pt]; mxi = ids[pt]; }
+        E += QC.energyJ(ms[pt]);
+        g.times[a] = ev.t[ids[pt]]; g.cumE[a] = E; g.bestAt[a] = bi; g.maxAt[a] = mxi;
+      }
+      g.rmsXY = Math.sqrt(ss / L); g.ev = ids[g.mi];
+    });
+    st.km = { key: key, dim: dim, clusters: cl, noDep: noDep, n: n };
+    return st.km;
+  }
+  /** k-means の塊を、時刻 T の姿に（T が null なら期間の合計）。まだ地震が起きていない塊は null */
+  function kmAt(g, T) {
+    if (T == null) return { ev: g.ev, n: g.n, E: g.E, meq: g.meq, maxI: g.maxI, alpha: 1 };
+    var lo = 0, hi = g.times.length;
+    while (lo < hi) { var m = (lo + hi) >> 1; if (g.times[m] <= T) lo = m + 1; else hi = m; }
+    if (!lo) return null;
+    var E = g.cumE[lo - 1], meq = QC.magOfEnergy(E), last = g.times[lo - 1], life = QC.lifeMs(meq, S), alpha = 1;
+    if (T > last) { alpha = 1 - (T - last) / life; if (alpha <= 0) return null; }   // 最後の地震から「残る時間」で消える
+    return { ev: g.bestAt[lo - 1], n: lo, E: E, meq: meq, maxI: g.maxAt[lo - 1], alpha: alpha };
+  }
+  function drawKm(ctx, scale, W, H, T) {
+    var km = kmClusters(T == null ? 3 : 4), proj = makeProj(scale), z = map.getZoom(), drawn = [];
+    for (var q = km.clusters.length - 1; q >= 0; q--) {           // 大きい塊を先に（下に）
+      var g = km.clusters[q], a = kmAt(g, T);
+      if (!a) continue;
+      var p = proj(a.ev), x = p[0], y = p[1], r = QC.aggRadius(a.meq, S) * scale;
+      if (x < -r || y < -r || x > W + r || y > H + r) continue;
+      var spread = g.rmsXY * QC.pxPerKm(st.ev.lat[a.ev], z) * scale;   // 塊の広がり（薄い点線）
+      if (spread > r * 1.15) {
+        ctx.save(); ctx.setLineDash([3 * scale, 3 * scale]); ctx.globalAlpha = 0.45 * a.alpha; ctx.strokeStyle = QC.colorOf('mag', a.meq, 0, 0);
+        ctx.lineWidth = 1 * scale; ctx.beginPath(); ctx.arc(x, y, spread, 0, 2 * Math.PI); ctx.stroke(); ctx.restore();
+      }
+      drawAggMarker(ctx, x, y, r, a, scale, a.alpha);
+      drawn.push([x, y, r, a.maxI, -1, a]);
+    }
+    for (q = drawn.length - 1; q >= 0; q--) drawAggLabel(ctx, drawn[q][0], drawn[q][1], drawn[q][2], drawn[q][5], scale);
+    return drawn;
+  }
+  function drawXsecKm(ctx, Wv, Hv, top, height, scale, bg, ink, sub, T) {
+    var ev = st.ev, ih = height - (XS.top + XS.bottom) * scale, maxKm = xsecMaxKm(ih, scale), y0 = top + XS.top * scale;
+    var km = kmClusters(T == null ? 3 : 4), proj = makeProj(scale), items = [], deep = 0, total = 0;
+    ctx.save(); ctx.beginPath(); ctx.rect(0, top, Wv, height); ctx.clip();
+    ctx.fillStyle = bg; ctx.fillRect(0, top, Wv, height);
+    ctx.font = 10 * scale + 'px sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    QC.depthTicks(maxKm).forEach(function (d) {
+      var y = y0 + ih * d / maxKm;
+      ctx.globalAlpha = d === 0 ? 0.8 : 0.3; ctx.fillStyle = sub; ctx.fillRect(0, y, Wv, d === 0 ? 1.2 * scale : 0.8 * scale);
+      ctx.globalAlpha = 1; ctx.fillText(d + 'km', 4 * scale, y + 7 * scale);
+    });
+    var rmax = Math.max(6 * scale, ih * 0.35);
+    for (var q = km.clusters.length - 1; q >= 0; q--) {
+      var a = kmAt(km.clusters[q], T);
+      if (!a) continue;
+      total += a.n;
+      var d = ev.dep[a.ev];
+      if (d > maxKm) { deep++; continue; }
+      var x = proj(a.ev)[0], y = y0 + ih * Math.max(d, 0) / maxKm, r = Math.min(QC.aggRadius(a.meq, S) * 0.75 * scale, rmax);
+      drawAggMarker(ctx, x, y, r, a, scale, a.alpha);
+      items.push([x, y, r, a]);
+    }
+    for (q = items.length - 1; q >= 0; q--) drawAggLabel(ctx, items[q][0], items[q][1], items[q][2], items[q][3], scale);
+    var az = QC.screenXAzimuth(S.bearing);
+    ctx.font = 11 * scale + 'px sans-serif'; ctx.textBaseline = 'top'; ctx.fillStyle = ink; ctx.textAlign = 'left';
+    ctx.fillText('断面図（k-means ' + (T == null ? 'xyz・期間の合計' : 'xyzt・その時刻まで') + '）　横＝地図の横方向（← ' + QC.dirName(az + 180) + '　' + QC.dirName(az) + ' →）　縦＝深さ 0〜' + Math.round(maxKm) + 'km', 48 * scale, top + 2 * scale);
+    ctx.textAlign = 'right';
+    ctx.fillText(total.toLocaleString() + '回・' + km.clusters.length + '塊' + (deep ? '・深すぎて範囲外 ' + deep + '塊' : '') + (km.noDep ? '・深さ不明 ' + km.noDep : ''), Wv - XS.right * scale, top + 2 * scale);
+    ctx.restore();
   }
   function drawAggLabel(ctx, x, y, r, g, scale) {
     if (r < 8 * scale) return;
@@ -397,6 +508,7 @@
   }
   /** 地図に集合マーカーを描く（画面と動画で共通）。吹き出し用に [x, y, r, 最大の地震, -1, 塊] を返す */
   function drawAggregate(ctx, scale, W, H, k0, k1) {
+    if (S.aggMethod === 'kmeans') return drawKm(ctx, scale, W, H, null);
     var list = aggClusters(k0, k1), o = map.getPixelBounds().min, ms = map.getSize(), v = viewSize(), drawn = [];
     for (var q = list.length - 1; q >= 0; q--) {           // 大きい塊を先に（下に）、小さい塊を上に
       var g = list[q], p = QC.rotScreen(g.x - o.x, g.y - o.y, ms.x, ms.y, v.W, v.H, S.bearing);
@@ -411,6 +523,7 @@
   }
   /** 断面図を集合マーカーで（横＝画面の横方向、縦＝深さ）。地図に見えている範囲の地震だけ */
   function drawXsecAgg(ctx, Wv, Hv, top, height, scale, bg, ink, sub, T) {
+    if (S.aggMethod === 'kmeans') return drawXsecKm(ctx, Wv, Hv, top, height, scale, bg, ink, sub, T);
     var ev = st.ev, ih = height - (XS.top + XS.bottom) * scale, maxKm = xsecMaxKm(ih, scale), y0 = top + XS.top * scale;
     var src = st.viewIdx && S.chartView ? st.viewIdx : st.f.idx;
     if (T != null) { var wr = windowRange(T); src = st.f.idx.subarray(wr[0], wr[1]); }   // 時間に沿った集合：時間の幅の地震だけ
@@ -772,6 +885,9 @@
     $('legend').innerHTML = h;
   }
   function aggNote() {
+    if (S.aggMethod === 'kmeans') return '集合マーカー：k-means（震源の' + (sumView() ? '東西・南北・深さの3次元' : '東西・南北・深さ・時間の4次元') +
+      '）で地図に見えている範囲の地震を' + S.aggK + '個にまとめ、位置＝中心に近い実際の震央、大きさと色＝推定エネルギーの合計（M相当）、数字＝' +
+      { meq: 'M相当', count: '回数', energy: 'エネルギー' }[S.aggLabel] + '、点線＝塊の広がり';
     return '集合マーカー：' + (sumView() ? '期間内' : windowText()) + 'の地震を格子でまとめ、大きさと色＝推定エネルギーの合計（M相当）、数字＝' +
       { meq: 'M相当', count: '回数', energy: 'エネルギー' }[S.aggLabel] + '。合計はほぼ最大の地震で決まる';
   }
@@ -1162,7 +1278,7 @@
     var clock = endState ? '期間の合計' : QC.formatClock(st.T, S.step);
     ctx.strokeText(clock, 12 * scale, 10 * scale); ctx.fillStyle = '#1d2433'; ctx.fillText(clock, 12 * scale, 10 * scale);
     var di = endState ? { text: periodText() + '（' + chartIdx().length.toLocaleString() + ' 回）' } : dayInfo(st.T);
-    if (!endState && S.mode === 'timeAgg') di = { text: '集合マーカー：' + windowText() + 'の合計　' + (di.text || '') };
+    if (!endState && S.mode === 'timeAgg') di = { text: '集合マーカー：' + (S.aggMethod === 'kmeans' ? 'k-means（xyzt）' : windowText() + 'の合計') + '　' + (di.text || '') };
     if (di.text) { ctx.font = 12 * scale + 'px sans-serif'; ctx.lineWidth = 3 * scale; ctx.strokeText(di.text, 14 * scale, 42 * scale); ctx.fillText(di.text, 14 * scale, 42 * scale); }
     drawLegendCanvas(ctx, 10 * scale, 64 * scale, scale);
     // 出典（右下）

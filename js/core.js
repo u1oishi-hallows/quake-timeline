@@ -340,6 +340,90 @@
     out.sort(function (a, b) { return a.E - b.E; });
     return out;
   }
+  // ---- k-means（マーカーの数 k を決めてまとめる）
+  /** 種を決めた乱数（同じ種なら毎回同じ結果） */
+  function rng(seed) {
+    var a = seed >>> 0;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  /** D 次元の k-means の中心を求める。P は点を並べた配列（n×D、[x0,y0,z0,t0, x1,…]）。
+   *  init（前の中心、k×D）があればそこから続ける。無ければ種を決めた k-means++ で始める。戻り値は中心（k×D） */
+  function kmeans(P, D, k, opt) {
+    opt = opt || {};
+    var n = P.length / D, c, i, j;
+    k = Math.min(k, n);
+    var C = new Float64Array(k * D);
+    if (!k) return C;
+    if (opt.init && opt.init.length === k * D) C.set(opt.init);
+    else {
+      var r = rng(opt.seed || 1), d2 = new Float64Array(n).fill(Infinity), f = Math.floor(r() * n);
+      for (j = 0; j < D; j++) C[j] = P[f * D + j];
+      for (c = 1; c < k; c++) {
+        var sum = 0;
+        for (i = 0; i < n; i++) {
+          var d = 0;
+          for (j = 0; j < D; j++) { var e = P[i * D + j] - C[(c - 1) * D + j]; d += e * e; }
+          if (d < d2[i]) d2[i] = d;
+          sum += d2[i];
+        }
+        var pick = n - 1;
+        if (sum > 0) { var u = r() * sum; for (i = 0; i < n; i++) { u -= d2[i]; if (u <= 0) { pick = i; break; } } }
+        else pick = Math.floor(r() * n);
+        for (j = 0; j < D; j++) C[c * D + j] = P[pick * D + j];
+      }
+    }
+    var assign = new Int32Array(n).fill(-1), sum2 = new Float64Array(k * D), cnt = new Int32Array(k);
+    for (var it = 0; it < (opt.iters || 25); it++) {
+      var changed = 0;
+      for (i = 0; i < n; i++) {
+        var best = nearest(P, i, D, C, k);
+        if (assign[i] !== best) { assign[i] = best; changed++; }
+      }
+      if (!changed) break;
+      sum2.fill(0); cnt.fill(0);
+      for (i = 0; i < n; i++) { cnt[assign[i]]++; for (j = 0; j < D; j++) sum2[assign[i] * D + j] += P[i * D + j]; }
+      for (c = 0; c < k; c++) if (cnt[c]) for (j = 0; j < D; j++) C[c * D + j] = sum2[c * D + j] / cnt[c];   // 空の塊は中心をそのまま
+    }
+    return C;
+  }
+  var _nd = 0;
+  function nearest(P, i, D, C, k) {
+    var best = 0, bd = Infinity;
+    for (var c = 0; c < k; c++) {
+      var d = 0;
+      for (var j = 0; j < D; j++) { var e = P[i * D + j] - C[c * D + j]; d += e * e; }
+      if (d < bd) { bd = d; best = c; }
+    }
+    _nd = bd;
+    return best;
+  }
+  /** 中心 C に全部の点を割り当てて塊ごとにまとめる。
+   *  mi＝塊の中心にいちばん近い実際の点（マーカーをその地震の位置に置く。地震の無い場所に出さない）、
+   *  members＝塊に入った点の番号、rms＝中心からの距離の二乗平均の平方根。空の塊は返さない。エネルギーの小さい順。 */
+  function kmeansClusters(P, D, ms, ids, C) {
+    var k = C.length / D, n = P.length / D, g = [], c, i;
+    for (c = 0; c < k; c++) g.push({ n: 0, E: 0, maxM: -Infinity, maxI: -1, ss: 0, bd: Infinity, mi: -1, list: [] });
+    for (i = 0; i < n; i++) {
+      var q = g[nearest(P, i, D, C, k)], bd = _nd;
+      q.n++; q.E += energyJ(ms[i]); q.ss += bd; q.list.push(i);
+      if (ms[i] > q.maxM) { q.maxM = ms[i]; q.maxI = ids[i]; }
+      if (bd < q.bd) { q.bd = bd; q.mi = i; }
+    }
+    var out = [];
+    g.forEach(function (q, c2) {
+      if (!q.n) return;
+      out.push({ mi: q.mi, members: Int32Array.from(q.list), c: C.slice(c2 * D, c2 * D + D), n: q.n, E: q.E,
+                 maxM: q.maxM, maxI: q.maxI, meq: magOfEnergy(q.E), rms: Math.sqrt(q.ss / q.n) });
+    });
+    out.sort(function (a, b) { return a.E - b.E; });
+    return out;
+  }
+
   /** idx（時刻順）のうち、tLo < 時刻 ≦ tHi の地震の位置 [k0, k1) */
   function idxRange(ev, idx, tLo, tHi) {
     var lo = 0, hi = idx.length;
@@ -425,7 +509,7 @@
     DEP_COLORS: DEP_COLORS, DEP_UNKNOWN: DEP_UNKNOWN, INT_STYLES: INT_STYLES, INT_UNKNOWN: INT_UNKNOWN,
     intensityStyle: intensityStyle, colorOf: colorOf, styleOf: styleOf, ageColor: ageColor, alphas: alphas,
     visibleAt: visibleAt, depthLook: depthLook, energyJ: energyJ, magOfEnergy: magOfEnergy, formatEnergy: formatEnergy,
-    aggregate: aggregate, aggState: aggState, aggAdd: aggAdd, aggFinish: aggFinish, aggRadius: aggRadius, idxRange: idxRange, computeStats: computeStats, rotScreen: rotScreen, rotDelta: rotDelta,
+    rng: rng, kmeans: kmeans, kmeansClusters: kmeansClusters, aggregate: aggregate, aggState: aggState, aggAdd: aggAdd, aggFinish: aggFinish, aggRadius: aggRadius, idxRange: idxRange, computeStats: computeStats, rotScreen: rotScreen, rotDelta: rotDelta,
     screenXAzimuth: screenXAzimuth, dirName: dirName, depthTicks: depthTicks, project0: project0, estIntensity: estIntensity, INT_THRESHOLDS: INT_THRESHOLDS,
     RING_LEVELS: RING_LEVELS, ringRadiiKm: ringRadiiKm, sphereRadiusKm: sphereRadiusKm, geomSphereRadiusKm: geomSphereRadiusKm, surfaceRadiusKm: surfaceRadiusKm, pxPerKm: pxPerKm, dailyCounts: dailyCounts, timeTicks: timeTicks
   };
