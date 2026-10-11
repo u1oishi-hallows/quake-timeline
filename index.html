@@ -50,6 +50,10 @@ header h1 { font-size: 16px; margin: 0; }
 #mtChart { height: 110px; } #cntChart { height: 70px; }
 fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 10px; padding: 6px 8px 8px; }
 legend.fs { font-weight: 700; font-size: 13px; padding: 0 4px; }
+details.sub { border: 1px solid var(--line); border-radius: 5px; padding: 4px 8px; margin: 6px 0 8px; }
+details.sub > summary { cursor: pointer; font-size: 13px; color: var(--sub); }
+details.sub[open] > summary { margin-bottom: 4px; }
+body:not(.circle) #depthBox { opacity: .55; }
 .sphereOnly { display: none; border-left: 3px solid var(--line); padding-left: 8px; margin: 4px 0 8px; }
 body.sphere .sphereOnly { display: block; }
 .ringsOnly { display: none; border-left: 3px solid var(--line); padding-left: 8px; margin: 4px 0 8px; }
@@ -158,6 +162,17 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
         <div class="note estOnly">推定は司・翠川(1999)の距離減衰式と翠川ほか(1999)の震度換算による目安です。観測点の震度と突き合わせると、M6.5以上の地震の震度3・4の範囲はおおむね合いますが、M4〜6の地震、震度5弱以上、深発地震（異常震域）では合いません。観測の最大震度は「色の意味＝最大震度」で重ねて比べられます。</div>
         <div class="note geomOnly">図式は揺れの推定ではありません。M で球の大きさを決め、深さで地表の円が小さくなる様子を見るための形です。</div>
       </div>
+      <details id="depthBox" class="sub">
+        <summary>奥行き（深さの見え方）</summary>
+        <label>3D の効き <span><input type="range" id="vol" min="0" max="1" step="0.05"> <b id="volV"></b></span></label>
+        <label>視点の高さ（km） <input type="number" id="viewH" step="10" min="10" max="1000"></label>
+        <label class="chk"><input type="checkbox" id="dShrink"> 遠い（深い）ほど小さく</label>
+        <label>ぼかしの強さ <input type="number" id="dBlur" step="0.1" min="0" max="2"></label>
+        <label>かすみの強さ <input type="number" id="dHaze" step="0.1" min="0" max="3"></label>
+        <label>かすみの下限（いちばん薄いときの濃さ） <input type="number" id="hazeMin" step="0.05" min="0" max="1"></label>
+        <label class="chk"><input type="checkbox" id="keepBig"> M <input type="number" id="keepBigM" step="0.5" min="3" max="9" style="width:56px"> 以上は薄めず、ぼかさない</label>
+        <div class="note">形が「円」のときに効きます。深さを「地面の上から見下ろした距離」とみなし、見かけの大きさを 視点の高さ ÷（視点の高さ＋深さ×3Dの効き）にします。深い地震から先に描くので、浅い地震が手前に来ます。震央の位置は動かしません。3D の効きを 0 にすると、深さを表さない元の円になります。深さ不明の地震には効かせません。</div>
+      </details>
       <label>色の意味
         <select id="colorMode"><option value="mag">M（規模）</option><option value="depth">深さ</option><option value="maxi">最大震度</option><option value="age">経過時間</option></select></label>
       <label>大きさの尺度

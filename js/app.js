@@ -22,13 +22,15 @@
     ripple: true, rippleMinM: 3, rippleFrames: 12,
     shape: 'circle', sphereKind: 'est', sphereInt: '4', sphereAmp: 1.31, sphereFade: 300, sphereR5: 30, sphereGrowth: 2,
     ringFrom: '3', ringMinM: 3.5,
+    vol: 0.5, viewH: 100, dShrink: true, dBlur: 1, dHaze: 1, hazeMin: 0.25, keepBig: true, keepBigM: 7,
     fillAlpha: 0.55, strokeAlpha: 0.9, fadePow: 0.7,
     step: 6 * HOUR, fps: 30, base: 'pale', t0: '', t1: '',
     bbox: [20, 120, 50, 156]
   };
   var NUM = ['magMin', 'intMin', 'depMin', 'depMax', 'r1', 'sizeGrowth', 'life1', 'lifeGrowth', 'lifeMax',
-             'rippleMinM', 'step', 'fps', 'sphereAmp', 'sphereFade', 'sphereR5', 'sphereGrowth', 'ringMinM'];
-  var BOOL = ['lowFreq', 'reference', 'ripple'];
+             'rippleMinM', 'step', 'fps', 'sphereAmp', 'sphereFade', 'sphereR5', 'sphereGrowth', 'ringMinM',
+             'vol', 'viewH', 'dBlur', 'dHaze', 'hazeMin', 'keepBigM'];
+  var BOOL = ['lowFreq', 'reference', 'ripple', 'dShrink', 'keepBig'];
   var STR = ['colorMode', 'sizeScale', 'base', 't0', 't1', 'shape', 'sphereInt', 'sphereKind', 'ringFrom'];
 
   var S = Object.assign({}, DEFAULTS);
@@ -59,6 +61,7 @@
       var el = $(k);
       if (!el) return;
       if (k !== 't0' && k !== 't1') el.value = S[k];
+      if (el.type === 'range') el.addEventListener('input', function () { el.dispatchEvent(new Event('change')); });
       el.addEventListener('change', function () {
         if (k === 't0' || k === 't1') return onPeriodChange();
         var v = NUM.indexOf(k) >= 0 ? +el.value : el.value;
@@ -81,7 +84,7 @@
     if (REFILTER.indexOf(k) >= 0) rebuild();
     else if (RELIFE.indexOf(k) >= 0) { computeLife(); }
     else if (RESPHERE.indexOf(k) >= 0) { computeSpheres(); }
-    if (k === 'shape' || k === 'sphereKind') applyShapeClass();
+    if (k === 'shape' || k === 'sphereKind' || k === 'vol') applyShapeClass();
     if (k === 'colorMode' || REFILTER.indexOf(k) >= 0) renderChartBases();
     if (k === 'step') syncSlider();
     renderLegend();
@@ -176,6 +179,8 @@
     computeSpheres();
   }
   function applyShapeClass() {
+    document.body.classList.toggle('circle', S.shape === 'circle');
+    if ($('volV')) $('volV').textContent = Math.round(S.vol * 100) + '%';
     document.body.classList.toggle('sphere', S.shape === 'sphere');
     document.body.classList.toggle('rings', S.shape === 'rings');
     document.body.classList.toggle('sphereGeom', S.sphereKind === 'geom');
@@ -255,6 +260,13 @@
     var ev = st.ev, idx = st.f.idx, vis = QC.visibleAt(ev, idx, st.life, T, st.maxLife);
     var rippleDur = S.rippleFrames * S.step, drawn = [];
     if (S.shape === 'rings') drawRingLayers(ctx, vis, T, proj, scale, W, H);
+    var depth3d = S.shape === 'circle' && S.vol > 0;
+    if (depth3d) {   // 奥行き：深いものから先に描き、浅い（近い）地震を手前にする。深さ不明は最後（効かせない）
+      vis.sort(function (a, b) {
+        var da = ev.dep[idx[a]], db = ev.dep[idx[b]];
+        return (isNaN(db) ? -1 : db) - (isNaN(da) ? -1 : da) || ev.mag[idx[b]] - ev.mag[idx[a]];
+      });
+    }
     for (var n = 0; n < vis.length; n++) {
       var k = vis[n], i = idx[k], m = ev.mag[i], age = T - ev.t[i], f = age / st.life[k];
       var p = proj(i), r = QC.radius(m, S) * scale;
@@ -263,9 +275,18 @@
         r = S.shape === 'rings' ? drawRings(ctx, k, i, p, f, sty, scale, W, H) : drawSphere(ctx, k, i, p, f, sty, scale, W, H);
         if (r < 0) continue;
       } else {
+      var look = depth3d ? QC.depthLook(ev.dep[i], m, S) : null;
+      if (look) { r *= look.scale; a = { fill: a.fill * look.alpha, stroke: a.stroke * look.alpha }; }
       if (p[0] < -r - 60 || p[1] < -r - 60 || p[0] > W + r + 60 || p[1] > H + r + 60) continue;
       ctx.fillStyle = sty.fill; ctx.strokeStyle = sty.stroke;
-      if (r < 1.2 && !sty.dash) { ctx.globalAlpha = Math.max(a.fill, a.stroke); ctx.fillRect(p[0] - r, p[1] - r, 2 * r, 2 * r); }
+      if (look && look.blur > 0.03 && r >= 2 && !sty.dash) {
+        // ぼかし：放射状のグラデーションで輪郭をにじませる（どのブラウザでも同じに見える）
+        var gi = r * (1 - look.blur), go = r * (1 + look.blur), gr = ctx.createRadialGradient(p[0], p[1], gi, p[0], p[1], go);
+        gr.addColorStop(0, withAlpha(sty.fill, 1)); gr.addColorStop(1, withAlpha(sty.fill, 0));
+        ctx.fillStyle = gr; ctx.globalAlpha = Math.min(1, a.fill * 1.2);
+        ctx.beginPath(); ctx.arc(p[0], p[1], go, 0, 2 * Math.PI); ctx.fill();
+        if (look.blur < 0.25) { ctx.globalAlpha = a.stroke; ctx.lineWidth = 1 * scale; ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, 2 * Math.PI); ctx.stroke(); }
+      } else if (r < 1.2 && !sty.dash) { ctx.globalAlpha = Math.max(a.fill, a.stroke); ctx.fillRect(p[0] - r, p[1] - r, 2 * r, 2 * r); }
       else {
         ctx.beginPath(); ctx.arc(p[0], p[1], Math.max(r, 1.5 * scale), 0, 2 * Math.PI);
         ctx.globalAlpha = a.fill; ctx.fill();
@@ -285,6 +306,21 @@
     return drawn;
   }
 
+  /** '#rrggbb' または 'rgb(r,g,b)' に透明度を付ける */
+  function withAlpha(c, al) {
+    var v;
+    if (c.charAt(0) === '#') { var n = parseInt(c.slice(1), 16); v = [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+    else v = (c.match(/\d+/g) || [0, 0, 0]).slice(0, 3).map(Number);
+    return 'rgba(' + v[0] + ',' + v[1] + ',' + v[2] + ',' + al + ')';
+  }
+  function depthNote() {
+    var parts = [];
+    if (S.dShrink) parts.push('小さく');
+    if (S.dBlur > 0) parts.push('ぼかし');
+    if (S.dHaze > 0) parts.push('薄く');
+    return '奥行き：深いほど' + parts.join('・') + '（3Dの効き' + Math.round(S.vol * 100) + '%、視点の高さ' + S.viewH + 'km' +
+      (S.keepBig ? '、M' + S.keepBigM + '以上は薄めない' : '') + '）';
+  }
   /** 球の表示：外の輪＝推定震度が境目になる距離の球（深いほど薄く）、塗り＝球が地表に出る円、点＝震央。
    *  画面外なら −1。戻り値は吹き出しの当たり判定に使う半径（px）。 */
   function drawSphere(ctx, k, i, p, f, sty, scale, W, H) {
@@ -435,6 +471,7 @@
       '<text x="64" y="52" font-size="10" fill="#333">点＝震央</text></svg>' +
       '<div class="note" style="color:#333;max-width:150px">' + sphereNote() + '</div>';
     else if (S.colorMode !== 'mag' && S.shape === 'circle') h += '<div class="note" style="color:#333">円の大きさ＝M</div>';
+    if (S.shape === 'circle' && S.vol > 0) h += '<div class="note" style="color:#333;max-width:150px">' + depthNote() + '</div>';
     $('legend').innerHTML = h;
   }
   function ringNote() {
@@ -460,8 +497,8 @@
       ctx.fillStyle = '#1d2433'; ctx.font = 12 * scale + 'px sans-serif'; ctx.fillText(it.label, x + 34 * scale, cy);
     });
     if (S.colorMode !== 'mag' && S.shape === 'circle') ctx.fillText('円の大きさ＝M', x + 8 * scale, y + h - 10 * scale);
-    if (S.shape === 'sphere' || S.shape === 'rings') {
-      var words = S.shape === 'rings' ? '輪の色＝推定震度（' + QC.RING_LEVELS.slice(QC.RING_LEVELS.indexOf(S.ringFrom)).map(function (lv) { return lv.replace('-', '弱').replace('+', '強'); }).join('・') + '）。' + ringNote() : sphereNote(), lines = [], cur = '', maxW = 230 * scale;
+    if (S.shape === 'sphere' || S.shape === 'rings' || (S.shape === 'circle' && S.vol > 0)) {
+      var words = S.shape === 'circle' ? depthNote() : S.shape === 'rings' ? '輪の色＝推定震度（' + QC.RING_LEVELS.slice(QC.RING_LEVELS.indexOf(S.ringFrom)).map(function (lv) { return lv.replace('-', '弱').replace('+', '強'); }).join('・') + '）。' + ringNote() : sphereNote(), lines = [], cur = '', maxW = 230 * scale;
       ctx.font = 11 * scale + 'px sans-serif';
       for (var c = 0; c < words.length; c++) { if (ctx.measureText(cur + words[c]).width > maxW) { lines.push(cur); cur = ''; } cur += words[c]; }
       lines.push(cur);

@@ -207,6 +207,20 @@
     return { fill: fill * fade, stroke: Math.min(1, s.strokeAlpha * (m >= 4 ? 1 : 0.6)) * fade };
   }
 
+  /** 奥行き：深さを「地面の上 viewH km から見下ろした距離」とみなした見え方。
+   *  vol（3D の効き 0〜1）で深さを縮める。0 なら深さを表さない（元の円）。
+   *  scale＝見かけの大きさ（遠いほど小さく）、blur＝輪郭のにじみ（半径に対する割合）、alpha＝かすみ（遠いほど薄く）。
+   *  keepBig のとき、M が keepBigM 以上の地震は薄めず、ぼかさない（深い大地震が消えないように）。深さ不明は効かせない。 */
+  function depthLook(dep, mag, s) {
+    if (!(s.vol > 0) || isNaN(dep)) return { scale: 1, blur: 0, alpha: 1 };
+    var near = s.viewH / (s.viewH + Math.max(dep, 0) * s.vol);
+    var o = { scale: s.dShrink ? near : 1,
+              blur: s.dBlur > 0 ? Math.min(0.95, s.dBlur * (1 - near)) : 0,
+              alpha: s.dHaze > 0 ? Math.max(s.hazeMin, Math.pow(near, s.dHaze)) : 1 };
+    if (s.keepBig && mag >= s.keepBigM) { o.blur = 0; o.alpha = 1; }
+    return o;
+  }
+
   /** 時刻 T に見えている地震（idx の中の位置）を、大きい順（下に描く順）に返す。
    *  T より後に起きた地震は決して含めない。 */
   function visibleAt(ev, idx, life, T, maxLife) {
@@ -314,7 +328,7 @@
     filterEvents: filterEvents, radius: radius, lifeMs: lifeMs, MAG_COLORS: MAG_COLORS,
     DEP_COLORS: DEP_COLORS, DEP_UNKNOWN: DEP_UNKNOWN, INT_STYLES: INT_STYLES, INT_UNKNOWN: INT_UNKNOWN,
     intensityStyle: intensityStyle, colorOf: colorOf, styleOf: styleOf, ageColor: ageColor, alphas: alphas,
-    visibleAt: visibleAt, project0: project0, estIntensity: estIntensity, INT_THRESHOLDS: INT_THRESHOLDS,
+    visibleAt: visibleAt, depthLook: depthLook, project0: project0, estIntensity: estIntensity, INT_THRESHOLDS: INT_THRESHOLDS,
     RING_LEVELS: RING_LEVELS, ringRadiiKm: ringRadiiKm, sphereRadiusKm: sphereRadiusKm, geomSphereRadiusKm: geomSphereRadiusKm, surfaceRadiusKm: surfaceRadiusKm, pxPerKm: pxPerKm, dailyCounts: dailyCounts, timeTicks: timeTicks
   };
   if (typeof module === 'object' && module.exports) module.exports = QC;

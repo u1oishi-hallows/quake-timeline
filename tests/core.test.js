@@ -227,6 +227,24 @@ t('球：半径・地表の円', function () {
   assert.ok(Math.abs(QC.pxPerKm(0, 0) - 256 / 40075.016686) < 1e-12);
   assert.ok(Math.abs(QC.pxPerKm(60, 3) / QC.pxPerKm(0, 3) - 2) < 1e-9);
 });
+t('奥行き：深いほど小さく・にじみ・薄く。効き0と深さ不明は元のまま。大きな地震は薄めない', function () {
+  var D = { vol: 1, viewH: 100, dShrink: true, dBlur: 1, dHaze: 1, hazeMin: 0.25, keepBig: true, keepBigM: 7 };
+  var l0 = QC.depthLook(0, 3, D), l100 = QC.depthLook(100, 3, D), l300 = QC.depthLook(300, 3, D);
+  assert.deepStrictEqual(l0, { scale: 1, blur: 0, alpha: 1 });
+  assert.strictEqual(l100.scale, 0.5);                       // 100 ÷（100＋100）
+  assert.strictEqual(l300.scale, 0.25);
+  assert.ok(l300.blur > l100.blur && l100.blur > 0);
+  assert.ok(l300.alpha < l100.alpha && l100.alpha < 1);
+  assert.strictEqual(QC.depthLook(5000, 3, D).alpha, 0.25);  // かすみの下限
+  assert.strictEqual(QC.depthLook(100, 3, Object.assign({}, D, { vol: 0.5 })).scale, 100 / 150);
+  assert.deepStrictEqual(QC.depthLook(300, 3, Object.assign({}, D, { vol: 0 })), { scale: 1, blur: 0, alpha: 1 });
+  assert.deepStrictEqual(QC.depthLook(NaN, 3, D), { scale: 1, blur: 0, alpha: 1 });
+  var big = QC.depthLook(682, 8.1, D);
+  assert.ok(big.scale < 0.2 && big.alpha === 1 && big.blur === 0);   // 深い大地震：小さくはなるが消えない
+  assert.strictEqual(QC.depthLook(300, 3, Object.assign({}, D, { dShrink: false })).scale, 1);
+  assert.strictEqual(QC.depthLook(300, 3, Object.assign({}, D, { dBlur: 0 })).blur, 0);
+  assert.strictEqual(QC.depthLook(300, 3, Object.assign({}, D, { dHaze: 0 })).alpha, 1);
+});
 t('地図の座標（Web メルカトル）', function () {
   var p = QC.project0(0, 0);
   assert.deepStrictEqual(p, [128, 128]);
