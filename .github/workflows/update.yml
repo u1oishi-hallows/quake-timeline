@@ -3,7 +3,8 @@ name: 気象庁から取得
 on:
   schedule:
     # 3時間ごと（UTC）。直近の地震情報と、直近 refetch_days 日の速報を取り直す
-    - cron: '17 */3 * * *'
+    # 2026-10-11 に :17 で作ったが 2 回とも動かなかったため、書き換えて登録し直す（分も :23 にずらす）
+    - cron: '23 */3 * * *'
   workflow_dispatch:
     inputs:
       command:
