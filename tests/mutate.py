@@ -58,6 +58,8 @@ MUTANTS = [
     ('js/core.js', "var d0 = floorDayJst(t0), nd", "var d0 = Math.floor(t0 / DAY) * DAY, nd", '1日の回数を UTC で区切る'),
     ('js/core.js', "256 * (0.5 - Math.log(", "256 * (0.5 + Math.log(", '地図の座標の向き'),
     ('js/core.js', "    { lo: 9, c: '#111111', label: 'M9以上' }];", "    ];", 'M9 の色が無い'),
+    ('js/core.js', "return surfaceRadiusKm(sphereRadiusKm(mw, depKm, INT_THRESHOLDS[lv], amp), depKm);", "return sphereRadiusKm(mw, depKm, INT_THRESHOLDS[lv], amp);", '同心円：深さを効かせない'),
+    ('js/core.js', "'5-': 5, '5+': 6, '6-': 7", "'5-': 6, '5+': 6, '6-': 7", '震度コードの取り違え（同心円の輪の色・CSV）'),
     ('js/core.js', "return r5 * Math.pow(growth, mw - 5);", "return r5 * Math.pow(growth, mw - 4);", '図式の球の大きさ'),
     ('js/core.js', "- 0.002 * xKm;", "- 0.0002 * xKm;", '球：減衰式の係数'),
     ('js/core.js', "return 2.68 + 1.72 * (lp + log10(amp));", "return 2.68 + 1.72 * lp;", '球：地盤の増幅を無視'),

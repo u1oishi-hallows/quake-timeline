@@ -21,14 +21,15 @@
     life1: 3, lifeGrowth: 1.8, lifeMin: 1 / 24, lifeMax: 120,
     ripple: true, rippleMinM: 3, rippleFrames: 12,
     shape: 'circle', sphereKind: 'est', sphereInt: '4', sphereAmp: 1.31, sphereFade: 300, sphereR5: 30, sphereGrowth: 2,
+    ringFrom: '3', ringMinM: 3.5,
     fillAlpha: 0.55, strokeAlpha: 0.9, fadePow: 0.7,
     step: 6 * HOUR, fps: 30, base: 'pale', t0: '', t1: '',
     bbox: [20, 120, 50, 156]
   };
   var NUM = ['magMin', 'intMin', 'depMin', 'depMax', 'r1', 'sizeGrowth', 'life1', 'lifeGrowth', 'lifeMax',
-             'rippleMinM', 'step', 'fps', 'sphereAmp', 'sphereFade', 'sphereR5', 'sphereGrowth'];
+             'rippleMinM', 'step', 'fps', 'sphereAmp', 'sphereFade', 'sphereR5', 'sphereGrowth', 'ringMinM'];
   var BOOL = ['lowFreq', 'reference', 'ripple'];
-  var STR = ['colorMode', 'sizeScale', 'base', 't0', 't1', 'shape', 'sphereInt', 'sphereKind'];
+  var STR = ['colorMode', 'sizeScale', 'base', 't0', 't1', 'shape', 'sphereInt', 'sphereKind', 'ringFrom'];
 
   var S = Object.assign({}, DEFAULTS);
   var st = {
@@ -75,7 +76,7 @@
   }
   var REFILTER = ['magMin', 'intMin', 'depMin', 'depMax', 'lowFreq', 'reference'];
   var RELIFE = ['life1', 'lifeGrowth', 'lifeMax'];
-  var RESPHERE = ['sphereInt', 'sphereAmp', 'sphereKind', 'sphereR5', 'sphereGrowth'];
+  var RESPHERE = ['sphereInt', 'sphereAmp', 'sphereKind', 'sphereR5', 'sphereGrowth', 'ringFrom', 'ringMinM'];
   function settingsChanged(k) {
     if (REFILTER.indexOf(k) >= 0) rebuild();
     else if (RELIFE.indexOf(k) >= 0) { computeLife(); }
@@ -176,6 +177,7 @@
   }
   function applyShapeClass() {
     document.body.classList.toggle('sphere', S.shape === 'sphere');
+    document.body.classList.toggle('rings', S.shape === 'rings');
     document.body.classList.toggle('sphereGeom', S.sphereKind === 'geom');
   }
   /** 球の半径と地表の円の半径（km）を、描く対象の地震ごとに求めておく */
@@ -191,6 +193,16 @@
       rs[k] = QC.surfaceRadiusKm(R[k], d);
     }
     st.sphR = R; st.sphS = rs;
+    // 同心円：M が ringMinM 以上の地震だけ、ringFrom 以上の震度の境目ごとに地表の円の半径を持つ
+    var lv = QC.RING_LEVELS.slice(Math.max(0, QC.RING_LEVELS.indexOf(S.ringFrom))), nl = lv.length;
+    var rr = new Float32Array(idx.length * nl);
+    for (k = 0; k < idx.length; k++) {
+      var j = idx[k];
+      if (ev.mag[j] < S.ringMinM || isNaN(ev.dep[j])) continue;
+      var a = QC.ringRadiiKm(ev.mag[j], Math.max(ev.dep[j], 0), S.sphereAmp, lv);
+      for (var n = 0; n < nl; n++) rr[k * nl + n] = a[n];
+    }
+    st.ringLv = lv; st.rings = rr;
   }
   function renderDropped() {
     var w = st.f.why, L = [];
@@ -242,12 +254,13 @@
   function drawQuakes(ctx, T, proj, scale, W, H) {
     var ev = st.ev, idx = st.f.idx, vis = QC.visibleAt(ev, idx, st.life, T, st.maxLife);
     var rippleDur = S.rippleFrames * S.step, drawn = [];
+    if (S.shape === 'rings') drawRingLayers(ctx, vis, T, proj, scale, W, H);
     for (var n = 0; n < vis.length; n++) {
       var k = vis[n], i = idx[k], m = ev.mag[i], age = T - ev.t[i], f = age / st.life[k];
       var p = proj(i), r = QC.radius(m, S) * scale;
       var sty = QC.styleOf(S.colorMode, m, ev.dep[i], f, ev.maxi[i]), a = QC.alphas(m, f, S);
-      if (S.shape === 'sphere') {
-        r = drawSphere(ctx, k, i, p, f, sty, scale, W, H);
+      if (S.shape === 'sphere' || S.shape === 'rings') {
+        r = S.shape === 'rings' ? drawRings(ctx, k, i, p, f, sty, scale, W, H) : drawSphere(ctx, k, i, p, f, sty, scale, W, H);
         if (r < 0) continue;
       } else {
       if (p[0] < -r - 60 || p[1] < -r - 60 || p[0] > W + r + 60 || p[1] > H + r + 60) continue;
@@ -298,6 +311,63 @@
     return Math.max(rs, 3 * scale);
   }
 
+  /** 同心円：震度の段ごとに、見えている全部の地震の輪をまとめて塗る（弱い段から順に、強い段を上へ）。
+   *  一枚の下書きに重ね塗りしてから一度だけ半透明で貼るので、輪が何重に重なっても濃くなりすぎず、
+   *  各地点で推定震度がいちばん高い段の色が見える。強い段の境目には線を引く。 */
+  function drawRingLayers(ctx, vis, T, proj, scale, W, H) {
+    var ev = st.ev, idx = st.f.idx, lv = st.ringLv, nl = lv.length, z = map.getZoom();
+    var cv = st.ringCanvas || (st.ringCanvas = document.createElement('canvas'));
+    if (cv.width !== ctx.canvas.width || cv.height !== ctx.canvas.height) { cv.width = ctx.canvas.width; cv.height = ctx.canvas.height; }
+    var c2 = cv.getContext('2d');
+    c2.setTransform(1, 0, 0, 1, 0, 0); c2.clearRect(0, 0, cv.width, cv.height);
+    c2.setTransform(ctx.getTransform());
+    var items = [];
+    for (var q = 0; q < vis.length; q++) {
+      var k = vis[q], i = idx[k];
+      if (!(st.rings[k * nl] > 0)) continue;
+      var p = proj(i), ppk = QC.pxPerKm(ev.lat[i], z) * scale, outer = st.rings[k * nl] * ppk;
+      if (p[0] < -outer || p[1] < -outer || p[0] > W + outer || p[1] > H + outer) continue;
+      var f = (T - ev.t[i]) / st.life[k];
+      items.push([k, p, ppk, 0.3 + 0.7 * Math.pow(1 - Math.max(0, Math.min(1, f)), S.fadePow)]);
+    }
+    for (var n = 0; n < nl; n++) {
+      var is = QC.intensityStyle(QC.MAXI[lv[n]]);
+      c2.fillStyle = is.fill;
+      for (var a = 0; a < items.length; a++) {
+        var rr = st.rings[items[a][0] * nl + n] * items[a][2];
+        if (rr <= 0) continue;
+        c2.globalAlpha = items[a][3];
+        c2.beginPath(); c2.arc(items[a][1][0], items[a][1][1], rr, 0, 2 * Math.PI); c2.fill();
+      }
+    }
+    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 0.5; ctx.drawImage(cv, 0, 0); ctx.restore();
+    // 境目の線：震度4以上の段だけ（弱い段の線は数が多く、地図を埋めるので引かない）
+    for (n = 0; n < nl; n++) {
+      if (QC.MAXI[lv[n]] < 4) continue;
+      var s2 = QC.intensityStyle(QC.MAXI[lv[n]]);
+      ctx.strokeStyle = s2.stroke; ctx.lineWidth = 1 * scale;
+      for (a = 0; a < items.length; a++) {
+        var r2 = st.rings[items[a][0] * nl + n] * items[a][2];
+        if (r2 <= 0) continue;
+        ctx.globalAlpha = 0.7 * items[a][3];
+        ctx.beginPath(); ctx.arc(items[a][1][0], items[a][1][1], r2, 0, 2 * Math.PI); ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+  /** 同心円の表示で、1 地震分の点（震央。色は「色の意味」）。輪は drawRingLayers がまとめて描く。 */
+  function drawRings(ctx, k, i, p, f, sty, scale, W, H) {
+    var ev = st.ev, nl = st.ringLv.length, ppk = QC.pxPerKm(ev.lat[i], map.getZoom()) * scale;
+    if (p[0] < -4 || p[1] < -4 || p[0] > W + 4 || p[1] > H + 4) return -1;
+    var fade = Math.pow(1 - Math.max(0, Math.min(1, f)), S.fadePow);
+    ctx.fillStyle = sty.fill; ctx.strokeStyle = sty.stroke;
+    var d = Math.max(1.4, Math.min(4, 0.5 + ev.mag[i] * 0.45)) * scale;
+    ctx.globalAlpha = Math.max(0.4, fade);
+    ctx.beginPath(); ctx.arc(p[0], p[1], d, 0, 2 * Math.PI); ctx.fill();
+    if (sty.stroke !== sty.fill || sty.dash) { ctx.lineWidth = 0.8 * scale; ctx.stroke(); }
+    return Math.max(d, 3 * scale);
+  }
+
   function onHover(e) {
     if (!st.drawn || st.rec) return;
     var rc = map.getContainer().getBoundingClientRect(), x = e.clientX - rc.left, y = e.clientY - rc.top;
@@ -310,7 +380,14 @@
     if (!best) { tip.style.display = 'none'; return; }
     var ev = st.ev, i = best[3], dep = ev.dep[i], mx = ev.maxi[i];
     var sph = '';
-    if (S.shape === 'sphere' && st.sphR && S.sphereKind === 'geom') {
+    if (S.shape === 'rings' && st.rings) {
+      var kr = QC.lowerBound(st.f.idx, i), nl = st.ringLv.length, parts = [];
+      for (var n = 0; n < nl; n++) {
+        var v = st.rings[kr * nl + n];
+        if (v > 0) parts.push('震度' + st.ringLv[n].replace('-', '弱').replace('+', '強') + '以上 ' + Math.round(v) + 'km');
+      }
+      sph = parts.length ? '　推定の輪：' + parts.join('・') : (ev.mag[i] < S.ringMinM ? '　（輪は M' + S.ringMinM + '以上）' : '　推定では震度' + S.ringFrom + 'に届かない');
+    } else if (S.shape === 'sphere' && st.sphR && S.sphereKind === 'geom') {
       var kg = QC.lowerBound(st.f.idx, i);
       sph = '　図式：球の半径' + Math.round(st.sphR[kg]) + 'km、地表の円の半径' + Math.round(st.sphS[kg]) + 'km';
     } else if (S.shape === 'sphere' && st.sphR) {
@@ -339,18 +416,29 @@
   function renderLegend() {
     var L = legendItems(), h = '<div class="ttl">' + L.title + '</div>';
     L.items.forEach(function (it) {
-      var r = it.m != null && S.shape !== 'sphere' ? Math.max(3, Math.min(QC.radius(it.m, S), 14)) : 5;
+      var r = it.m != null && S.shape === 'circle' ? Math.max(3, Math.min(QC.radius(it.m, S), 14)) : 5;
       h += '<div class="row"><span class="sw" style="width:' + 2 * r + 'px;height:' + 2 * r + 'px;background:' +
         it.c + '99;border-color:' + (it.stroke || it.c) + (it.dash ? ';border-style:dashed' : '') + '"></span>' + it.label + '</div>';
     });
+    if (S.shape === 'rings') {
+      h += '<div class="ttl" style="margin-top:6px">推定震度の輪</div><div style="display:flex;flex-wrap:wrap;gap:2px 6px;max-width:150px">';
+      QC.RING_LEVELS.slice(QC.RING_LEVELS.indexOf(S.ringFrom)).forEach(function (lv) {
+        var is = QC.intensityStyle(QC.MAXI[lv]);
+        h += '<span style="display:inline-flex;align-items:center;gap:2px"><span class="sw" style="width:10px;height:10px;background:' + is.fill + '55;border-color:' + is.stroke + '"></span>' + lv.replace('-', '弱').replace('+', '強') + '</span>';
+      });
+      h += '</div><div class="note" style="color:#333;max-width:150px">' + ringNote() + '</div>';
+    }
     if (S.shape === 'sphere') h += '<svg width="150" height="62" viewBox="0 0 150 62" aria-hidden="true">' +
       '<circle cx="31" cy="31" r="28" fill="#7a2bb3" fill-opacity=".06" stroke="#7a2bb3" stroke-opacity=".8"/>' +
       '<circle cx="31" cy="31" r="15" fill="#7a2bb3" fill-opacity=".38"/><rect x="29.5" y="29.5" width="3" height="3" fill="#7a2bb3"/>' +
       '<text x="64" y="16" font-size="10" fill="#333">外の輪＝球</text><text x="64" y="34" font-size="10" fill="#333">塗り＝地表</text>' +
       '<text x="64" y="52" font-size="10" fill="#333">点＝震央</text></svg>' +
       '<div class="note" style="color:#333;max-width:150px">' + sphereNote() + '</div>';
-    else if (S.colorMode !== 'mag') h += '<div class="note" style="color:#333">円の大きさ＝M</div>';
+    else if (S.colorMode !== 'mag' && S.shape === 'circle') h += '<div class="note" style="color:#333">円の大きさ＝M</div>';
     $('legend').innerHTML = h;
+  }
+  function ringNote() {
+    return '推定（司・翠川1999）：震源から推定震度の境目ごとの範囲を地表に描いた輪。M' + S.ringMinM + '以上の地震だけ。点＝震央（色は' + legendItems().title + '）';
   }
   function sphereNote() {
     if (S.sphereKind === 'geom') return '図式（揺れの推定ではない）：外の輪＝M で大きさを決めた震源の球（深いほど薄く）、塗り＝球が地表に出る円（深いほど小さい）、点＝震央';
@@ -364,16 +452,16 @@
     ctx.fillStyle = '#1d2433'; ctx.font = 'bold ' + 12 * scale + 'px sans-serif'; ctx.textBaseline = 'middle';
     ctx.fillText(L.title, x + 8 * scale, y + 12 * scale);
     L.items.forEach(function (it, n) {
-      var cy = y + 24 * scale + n * rowH + rowH / 2, r = (it.m != null && S.shape !== 'sphere' ? Math.max(3, Math.min(QC.radius(it.m, S), 9)) : 5) * scale;
+      var cy = y + 24 * scale + n * rowH + rowH / 2, r = (it.m != null && S.shape === 'circle' ? Math.max(3, Math.min(QC.radius(it.m, S), 9)) : 5) * scale;
       ctx.beginPath(); ctx.arc(x + 18 * scale, cy, r, 0, 2 * Math.PI);
       ctx.fillStyle = it.c; ctx.globalAlpha = 0.6; ctx.fill(); ctx.globalAlpha = 1; ctx.strokeStyle = it.stroke || it.c; ctx.lineWidth = 1.5 * scale;
       if (it.dash) ctx.setLineDash([3 * scale, 2 * scale]);
       ctx.stroke(); ctx.setLineDash([]);
       ctx.fillStyle = '#1d2433'; ctx.font = 12 * scale + 'px sans-serif'; ctx.fillText(it.label, x + 34 * scale, cy);
     });
-    if (S.colorMode !== 'mag' && S.shape !== 'sphere') ctx.fillText('円の大きさ＝M', x + 8 * scale, y + h - 10 * scale);
-    if (S.shape === 'sphere') {
-      var words = sphereNote(), lines = [], cur = '', maxW = 230 * scale;
+    if (S.colorMode !== 'mag' && S.shape === 'circle') ctx.fillText('円の大きさ＝M', x + 8 * scale, y + h - 10 * scale);
+    if (S.shape === 'sphere' || S.shape === 'rings') {
+      var words = S.shape === 'rings' ? '輪の色＝推定震度（' + QC.RING_LEVELS.slice(QC.RING_LEVELS.indexOf(S.ringFrom)).map(function (lv) { return lv.replace('-', '弱').replace('+', '強'); }).join('・') + '）。' + ringNote() : sphereNote(), lines = [], cur = '', maxW = 230 * scale;
       ctx.font = 11 * scale + 'px sans-serif';
       for (var c = 0; c < words.length; c++) { if (ctx.measureText(cur + words[c]).width > maxW) { lines.push(cur); cur = ''; } cur += words[c]; }
       lines.push(cur);
@@ -699,6 +787,6 @@
       setStatus('データを読み込めませんでした：' + e.message, true);
     });
   }
-  window.__app = { S: S, st: st, setT: setT, boot: boot, drawFrame: drawFrame, QC: QC };
+  window.__app = { S: S, st: st, setT: setT, boot: boot, drawFrame: drawFrame, QC: QC, getMap: function () { return map; } };
   boot();
 })();

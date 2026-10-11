@@ -211,6 +211,14 @@ t('球：半径・地表の円', function () {
   var r7 = function (d) { return QC.surfaceRadiusKm(QC.sphereRadiusKm(7, d, thr, 1.31), d); };
   assert.ok(r7(100) > r7(10));
   assert.ok(QC.estIntensity(7, 100, 150, 1.31) > QC.estIntensity(7, 10, 150, 1.31));
+  // 同心円：外ほど弱い震度で半径が大きい。各輪は球の地表の円と同じ
+  var rings = QC.ringRadiiKm(7.6, 16, 1.31, ['3', '4', '5-', '6-', '7']);
+  for (var n = 1; n < rings.length; n++) assert.ok(rings[n] <= rings[n - 1]);
+  assert.ok(rings[0] > rings[1] && rings[1] > 0);
+  assert.strictEqual(rings[1], QC.surfaceRadiusKm(QC.sphereRadiusKm(7.6, 16, 3.5, 1.31), 16));
+  assert.deepStrictEqual(QC.ringRadiiKm(3, 10, 1.31, ['3', '4']), [0, 0]);
+  assert.strictEqual(QC.intensityStyle(QC.MAXI['5+']).label, '震度5強');
+  assert.strictEqual(QC.intensityStyle(QC.MAXI['5-']).label, '震度5弱');
   // 図式の球：M だけで決まり、深いほど地表の円が小さい（必ず）
   assert.strictEqual(QC.geomSphereRadiusKm(5, 30, 2), 30);
   assert.strictEqual(QC.geomSphereRadiusKm(7, 30, 2), 120);

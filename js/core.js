@@ -234,7 +234,7 @@
     return 2.68 + 1.72 * (lp + log10(amp));
   }
   /** 震度の境目（計測震度）：震度3 = 2.5、4 = 3.5、5弱 = 4.5、5強 = 5.0、6弱 = 5.5、6強 = 6.0、7 = 6.5 */
-  var INT_THRESHOLDS = { '3': 2.5, '4': 3.5, '5-': 4.5, '5+': 5.0, '6-': 5.5, '6+': 6.0, '7': 6.5 };
+  var INT_THRESHOLDS = { '1': 0.5, '2': 1.5, '3': 2.5, '4': 3.5, '5-': 4.5, '5+': 5.0, '6-': 5.5, '6+': 6.0, '7': 6.5 };
   /** 推定震度が ithr になる震源距離 R（km）。震源の真上でも届かなければ 0。 */
   function sphereRadiusKm(mw, depKm, ithr, amp, dtype) {
     var lo = Math.max(depKm, 0.1);
@@ -246,6 +246,11 @@
       if (estIntensity(mw, depKm, mid, amp, dtype) >= ithr) lo = mid; else hi = mid;
     }
     return lo;
+  }
+  /** 同心円：震度の境目ごとの地表の円の半径（km）。levels は ['3','4','5-',…]。外（弱い震度）から順。 */
+  var RING_LEVELS = ['1', '2', '3', '4', '5-', '5+', '6-', '6+', '7'];
+  function ringRadiiKm(mw, depKm, amp, levels) {
+    return levels.map(function (lv) { return surfaceRadiusKm(sphereRadiusKm(mw, depKm, INT_THRESHOLDS[lv], amp), depKm); });
   }
   /** 図式の球：M だけで半径を決める（揺れの推定ではない）。M5 で r5 km、M が 1 増えるごとに growth 倍。 */
   function geomSphereRadiusKm(mw, r5, growth) { return r5 * Math.pow(growth, mw - 5); }
@@ -310,7 +315,7 @@
     DEP_COLORS: DEP_COLORS, DEP_UNKNOWN: DEP_UNKNOWN, INT_STYLES: INT_STYLES, INT_UNKNOWN: INT_UNKNOWN,
     intensityStyle: intensityStyle, colorOf: colorOf, styleOf: styleOf, ageColor: ageColor, alphas: alphas,
     visibleAt: visibleAt, project0: project0, estIntensity: estIntensity, INT_THRESHOLDS: INT_THRESHOLDS,
-    sphereRadiusKm: sphereRadiusKm, geomSphereRadiusKm: geomSphereRadiusKm, surfaceRadiusKm: surfaceRadiusKm, pxPerKm: pxPerKm, dailyCounts: dailyCounts, timeTicks: timeTicks
+    RING_LEVELS: RING_LEVELS, ringRadiiKm: ringRadiiKm, sphereRadiusKm: sphereRadiusKm, geomSphereRadiusKm: geomSphereRadiusKm, surfaceRadiusKm: surfaceRadiusKm, pxPerKm: pxPerKm, dailyCounts: dailyCounts, timeTicks: timeTicks
   };
   if (typeof module === 'object' && module.exports) module.exports = QC;
   else root.QC = QC;

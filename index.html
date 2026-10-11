@@ -52,6 +52,8 @@ fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 10px; 
 legend.fs { font-weight: 700; font-size: 13px; padding: 0 4px; }
 .sphereOnly { display: none; border-left: 3px solid var(--line); padding-left: 8px; margin: 4px 0 8px; }
 body.sphere .sphereOnly { display: block; }
+.ringsOnly { display: none; border-left: 3px solid var(--line); padding-left: 8px; margin: 4px 0 8px; }
+body.rings .ringsOnly { display: block; }
 .geomOnly { display: none; } body.sphereGeom .geomOnly { display: block; } body.sphereGeom .estOnly { display: none; }
 label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 5px 0; }
 label.chk { justify-content: flex-start; }
@@ -133,7 +135,13 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     <fieldset>
       <legend class="fs">見た目</legend>
       <label>形
-        <select id="shape"><option value="circle">円（大きさ＝M）</option><option value="sphere">球（震源の深さを見る）</option></select></label>
+        <select id="shape"><option value="circle">円（大きさ＝M）</option><option value="sphere">球（震源の深さを見る）</option><option value="rings">同心円（推定震度の輪）</option></select></label>
+      <div class="ringsOnly">
+        <label>いちばん外の輪の震度
+          <select id="ringFrom"><option value="1">震度1</option><option value="2">震度2</option><option value="3">震度3</option><option value="4">震度4</option><option value="5-">震度5弱</option></select></label>
+        <label>輪を描く M の下限 <input type="number" id="ringMinM" step="0.5" min="0" max="9"></label>
+        <div class="note">推定は「球」と同じ式（司・翠川1999、地盤の増幅1.31倍）。観測点の震度との突き合わせでは、M6.5以上の震度3・4はおおむね合い、M4〜6・震度5弱以上・深発地震は合いませんでした。点の色を「最大震度」にすると、推定の輪と観測を比べられます。</div>
+      </div>
       <div class="sphereOnly">
         <label>球の大きさの決め方
           <select id="sphereKind"><option value="est">推定（震度の境目が届く距離）</option><option value="geom">図式（M だけで決める）</option></select></label>

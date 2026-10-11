@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>深さの見え方（作例）</title>
+<link rel="stylesheet" href="../vendor/leaflet.min.css">
+<style>
+:root { --bg: #f4f5f7; --panel: #fff; --ink: #1d2433; --sub: #5b6475; --line: #d9dde5; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #15181e; --panel: #1f232b; --ink: #e8ebf1; --sub: #9aa3b2; --line: #343a46; }
+}
+:root[data-theme="dark"] { --bg: #15181e; --panel: #1f232b; --ink: #e8ebf1; --sub: #9aa3b2; --line: #343a46; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: system-ui, -apple-system, "Hiragino Sans", sans-serif; font-size: 14px; }
+header { padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+header h1 { font-size: 16px; margin: 0 0 4px; }
+.ctl { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; font-size: 13px; }
+.ctl label { display: inline-flex; gap: 6px; align-items: center; }
+.note { color: var(--sub); font-size: 12px; line-height: 1.5; margin: 4px 0 0; }
+#grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 8px 16px 16px; }
+.cell { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.cell h2 { font-size: 13px; margin: 0; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.cell h2 span { font-weight: 400; color: var(--sub); }
+.mapbox { position: relative; height: 420px; }
+.mapbox .m { position: absolute; inset: 0; background: #cfe3f2; }
+.mapbox canvas { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 450; }
+.leg { position: absolute; left: 8px; bottom: 8px; z-index: 500; background: rgba(255,255,255,.9); color: #1d2433; border-radius: 6px; padding: 5px 7px; font-size: 11px; line-height: 1.35; pointer-events: none; }
+@media (max-width: 900px) { #grid { grid-template-columns: 1fr; } .mapbox { height: 360px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>深さの見え方（作例）：遠いほど小さく・ぼやけて</h1>
+  <div class="ctl">
+    <label>場面 <select id="scene">
+      <option value="2024">2024年の1年分（M4以上）</option>
+      <option value="2011">2011年3月（M4.5以上）</option>
+      <option value="2015">2015年5〜6月（M4以上、小笠原の深発 M8.1 を含む）</option>
+    </select></label>
+    <label>色 <select id="color"><option value="depth">深さ</option><option value="mag">M</option></select></label>
+    <label>視点の高さ（km） <input type="range" id="H" min="20" max="600" step="10" value="100"> <b id="Hv">100</b></label>
+    <label>ぼかしの強さ <input type="range" id="blur" min="0" max="2" step="0.1" value="1"> <b id="Bv">1.0</b></label>
+  </div>
+  <div class="note">深さを「地面の上 H km から見下ろしたときの距離」とみなし、見かけの大きさを H ÷（H＋深さ）にします。深いものから先に描くので、浅い（近い）地震が手前に来ます。
+  震央の位置は動かしません（本物の遠近法では深い点ほど視点の真下に寄って見えますが、そうすると地震が実際と違う場所に描かれるため）。円の大きさの基準は M（今の地図と同じ）。<span id="cnt"></span></div>
+</header>
+<div id="grid">
+  <div class="cell"><h2>A　今の円 <span>深さは表さない（M の大きい順に下から）</span></h2><div class="mapbox"><div class="m" id="mA"></div><canvas id="cA"></canvas><div class="leg" id="lA"></div></div></div>
+  <div class="cell"><h2>B　遠いほど小さく <span>見かけの大きさ＝H÷(H＋深さ)</span></h2><div class="mapbox"><div class="m" id="mB"></div><canvas id="cB"></canvas><div class="leg" id="lB"></div></div></div>
+  <div class="cell"><h2>C　＋ぼかし <span>深いほど輪郭がにじむ</span></h2><div class="mapbox"><div class="m" id="mC"></div><canvas id="cC"></canvas><div class="leg" id="lC"></div></div></div>
+  <div class="cell"><h2>D　＋かすみ <span>深いほど薄く、下地に溶ける</span></h2><div class="mapbox"><div class="m" id="mD"></div><canvas id="cD"></canvas><div class="leg" id="lD"></div></div></div>
+</div>
+<script src="../vendor/leaflet.min.js"></script>
+<script src="../js/core.js"></script>
+<script>
+(function () {
+  'use strict';
+  var GSI = 'https:' + '/' + '/cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png';
+  var SCENES = {
+    '2024': { months: QC.monthsBetween(QC.dateToMs('2024-01-01'), QC.dateToMs('2025-01-01')), magMin: 4, center: [36, 137], zoom: 5 },
+    '2011': { months: ['2011-03'], magMin: 4.5, center: [37.5, 141], zoom: 6 },
+    '2015': { months: ['2015-05', '2015-06'], magMin: 4, center: [32, 139], zoom: 5 }
+  };
+  var S = { r1: 1.5, sizeGrowth: 1.7, sizeScale: 'exp' };
+  var maps = {}, ev = null, order = null, cache = {}, manifest = null;
+  var ids = ['A', 'B', 'C', 'D'];
+  function $(id) { return document.getElementById(id); }
+
+  ids.forEach(function (id) {
+    var m = L.map('m' + id, { zoomControl: id === 'A', attributionControl: id === 'D', zoomSnap: 0.5 });
+    L.tileLayer(GSI, { maxZoom: 18, attribution: '地理院タイル｜震源：気象庁' }).addTo(m);
+    maps[id] = m;
+  });
+  // 4 枚の地図を連動させる
+  var syncing = false;
+  ids.forEach(function (id) {
+    maps[id].on('move zoom', function () {
+      if (syncing) return; syncing = true;
+      ids.forEach(function (o) { if (o !== id) maps[o].setView(maps[id].getCenter(), maps[id].getZoom(), { animate: false }); });
+      syncing = false; drawAll();
+    });
+  });
+
+  function load() {
+    var sc = SCENES[$('scene').value];
+    return Promise.all(sc.months.filter(function (m) { return manifest.months[m]; }).map(function (m) {
+      if (cache[m]) return cache[m];
+      return fetch('../data/' + manifest.months[m].file).then(function (r) { return r.text(); }).then(function (t) { return (cache[m] = QC.parseMonthCsv(t)); });
+    })).then(function (parts) {
+      var all = QC.concatColumns(parts), keep = [], noDep = 0;
+      for (var i = 0; i < all.n; i++) {
+        if (!(all.mag[i] >= sc.magMin) || all.aux[i] === 3 || all.q[i] === 'N') continue;
+        if (isNaN(all.dep[i])) { noDep++; continue; }
+        keep.push(i);
+      }
+      ev = all;
+      order = { byMag: keep.slice().sort(function (a, b) { return all.mag[b] - all.mag[a]; }),
+                byDepth: keep.slice().sort(function (a, b) { return all.dep[b] - all.dep[a]; }) };
+      $('cnt').textContent = '（この場面で描く地震 ' + keep.length + ' 件' + (noDep ? '。深さ不明 ' + noDep + ' 件は描かない' : '') + '）';
+      syncing = true;
+      ids.forEach(function (id) { maps[id].setView(sc.center, sc.zoom, { animate: false }); });
+      syncing = false;
+      drawAll();
+    });
+  }
+
+  function color(i) { return QC.colorOf($('color').value, ev.mag[i], ev.dep[i], 0); }
+  function hexToRgb(h) { var n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+  function rgba(h, a) { var c = h.charAt(0) === '#' ? hexToRgb(h) : h.match(/\d+/g).map(Number); return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')'; }
+
+  function drawAll() { if (ev) ids.forEach(draw); }
+  function draw(id) {
+    var m = maps[id], c = $('c' + id), sz = m.getSize(), dpr = window.devicePixelRatio || 1;
+    if (c.width !== sz.x * dpr) { c.width = sz.x * dpr; c.height = sz.y * dpr; c.style.width = sz.x + 'px'; c.style.height = sz.y + 'px'; }
+    var ctx = c.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, sz.x, sz.y);
+    var H = +$('H').value, bk = +$('blur').value, o = m.getPixelBounds().min, k = Math.pow(2, m.getZoom());
+    var list = id === 'A' ? order.byMag : order.byDepth;
+    for (var n = 0; n < list.length; n++) {
+      var i = list[n], p = QC.project0(ev.lat[i], ev.lon[i]), x = p[0] * k - o.x, y = p[1] * k - o.y;
+      var r0 = QC.radius(ev.mag[i], S), d = Math.max(ev.dep[i], 0), col = color(i);
+      var s = id === 'A' ? 1 : H / (H + d);             // 見かけの大きさ
+      var r = Math.max(0.8, r0 * s);
+      if (x < -r - 20 || y < -r - 20 || x > sz.x + r + 20 || y > sz.y + r + 20) continue;
+      var a = 1;
+      if (id === 'D') a = Math.max(0.15, s);             // かすみ：遠いほど薄く
+      var fillA = (ev.mag[i] >= 6 ? 0.3 : ev.mag[i] >= 5 ? 0.45 : 0.65) * a;
+      if (id === 'C' || id === 'D') {
+        // ぼかし：深さに応じて輪郭のにじみ幅を広げる（放射状のグラデーション。どのブラウザでも同じに見える）
+        var b = Math.min(0.95, bk * (1 - s));
+        var inner = r * (1 - b), outer = r * (1 + b);
+        var g = ctx.createRadialGradient(x, y, inner, x, y, outer);
+        g.addColorStop(0, rgba(col, Math.min(1, fillA * 1.2)));
+        g.addColorStop(1, rgba(col, 0));
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, outer, 0, 2 * Math.PI); ctx.fill();
+        if (b < 0.25) { ctx.strokeStyle = rgba(col, 0.9 * a); ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.stroke(); }
+      } else {
+        ctx.fillStyle = rgba(col, fillA); ctx.strokeStyle = rgba(col, 0.9);
+        ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.fill(); ctx.lineWidth = 1; ctx.stroke();
+      }
+    }
+    legend(id);
+  }
+  function legend(id) {
+    var mode = $('color').value, items = mode === 'depth' ? QC.DEP_COLORS : QC.MAG_COLORS.filter(function (b) { return b.lo >= 4; });
+    var h = '<b>' + (mode === 'depth' ? '深さ' : 'M') + '</b><br>' + items.map(function (b) {
+      return '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:' + b.c + ';margin-right:3px"></span>' + b.label; }).join('<br>');
+    if (id !== 'A') {
+      var H = +$('H').value;
+      h += '<br><b>見かけの大きさ</b><br>' + [0, 50, 100, 300, 600].map(function (d) { return '深さ' + d + 'km：' + Math.round(100 * H / (H + d)) + '%'; }).join('<br>');
+    }
+    $('l' + id).innerHTML = h;
+  }
+
+  ['color', 'H', 'blur'].forEach(function (k) { $(k).addEventListener('input', function () { $('Hv').textContent = $('H').value; $('Bv').textContent = (+$('blur').value).toFixed(1); drawAll(); }); });
+  $('scene').addEventListener('change', load);
+  window.addEventListener('resize', drawAll);
+  fetch('../data/manifest.json').then(function (r) { return r.json(); }).then(function (m) { manifest = m; return load(); });
+  window.__demo = { maps: maps, drawAll: drawAll };
+})();
+</script>
+</body>
+</html>
