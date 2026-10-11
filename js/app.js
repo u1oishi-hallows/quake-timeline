@@ -417,12 +417,31 @@
       if (dim === 4) P[q * dim + 3] = (ev.t[i] - st.t0) / DAY * S.kmKmPerDay;
       ms[q] = ev.mag[i]; ids[q] = i;
     }
-    var stride = Math.max(1, Math.ceil(n / KM_SAMPLE)), SP = P;
+    // 4 次元（再生）では k を「同時に見えるマーカーの数」にする：塊は時期でも分かれるので、全体の塊の数を増やす。
+    // 初めの値は「期間を km にした長さ ÷ 塊 1 つ分の広さの一辺」倍。まとめたあと実際に数えて、足りなければ 1 回だけ増やす
+    var K = S.aggK, v2 = viewSize(), ppk = QC.pxPerKm(map.getCenter().lat, map.getZoom());
+    if (dim === 4) {
+      var cellKm = Math.sqrt((v2.W / ppk) * (v2.H / ppk) / S.aggK), spanKm = (st.t1 - st.t0) / DAY * S.kmKmPerDay;
+      K = Math.min(KM_MAX, Math.max(S.aggK, Math.round(S.aggK * spanKm / cellKm)));
+    }
+    var fit = kmFit(P, dim, ms, ids, K), active = dim === 4 ? kmActiveMedian(fit) : fit.length;
+    if (dim === 4 && active < 0.85 * S.aggK && K < KM_MAX) {
+      K = Math.min(KM_MAX, Math.round(K * S.aggK / Math.max(active, 1)));
+      fit = kmFit(P, dim, ms, ids, K); active = kmActiveMedian(fit);
+    }
+    st.km = { key: key, dim: dim, clusters: fit, noDep: noDep, n: n, K: K, active: active };
+    return st.km;
+  }
+  var KM_MAX = 400;
+  /** 中心を求め（多いときは間引いた地震で）、全部の地震を割り当て、再生用の累積を作る */
+  function kmFit(P, dim, ms, ids, K) {
+    var ev = st.ev, n = ids.length, cap = K > 100 ? 8000 : KM_SAMPLE;
+    var stride = Math.max(1, Math.ceil(n / cap)), SP = P, q;
     if (stride > 1) {
       var m = Math.floor(n / stride); SP = new Float64Array(m * dim);
       for (q = 0; q < m; q++) for (var j = 0; j < dim; j++) SP[q * dim + j] = P[q * stride * dim + j];
     }
-    var C = QC.kmeans(SP, dim, S.aggK, { seed: 7, iters: 30 }), cl = QC.kmeansClusters(P, dim, ms, ids, C);
+    var C = QC.kmeans(SP, dim, K, { seed: 7, iters: K > 100 ? 20 : 30 }), cl = QC.kmeansClusters(P, dim, ms, ids, C);
     cl.forEach(function (g) {
       // 塊の広がり（東西・南北だけ、km）と、再生用の「その時刻までの」累積（members は時刻順）
       var ss = 0, L = g.members.length, best = Infinity, bi = -1, mx = -Infinity, mxi = -1, E = 0;
@@ -438,8 +457,18 @@
       }
       g.rmsXY = Math.sqrt(ss / L); g.ev = ids[g.mi];
     });
-    st.km = { key: key, dim: dim, clusters: cl, noDep: noDep, n: n };
-    return st.km;
+    return cl;
+  }
+  /** 期間内の 9 つの時刻で、見えている塊の数の中央値 */
+  function kmActiveMedian(cl) {
+    var c = [];
+    for (var s = 1; s <= 9; s++) {
+      var T = st.t0 + (st.t1 - st.t0) * s / 10, a = 0;
+      for (var q = 0; q < cl.length; q++) if (kmAt(cl[q], T)) a++;
+      c.push(a);
+    }
+    c.sort(function (x, y) { return x - y; });
+    return c[4];
   }
   /** k-means の塊を、時刻 T の姿に（T が null なら期間の合計）。まだ地震が起きていない塊は null */
   function kmAt(g, T) {
@@ -494,9 +523,14 @@
     for (q = items.length - 1; q >= 0; q--) drawAggLabel(ctx, items[q][0], items[q][1], items[q][2], items[q][3], scale);
     var az = QC.screenXAzimuth(S.bearing);
     ctx.font = 11 * scale + 'px sans-serif'; ctx.textBaseline = 'top'; ctx.fillStyle = ink; ctx.textAlign = 'left';
-    ctx.fillText('断面図（k-means ' + (T == null ? 'xyz・期間の合計' : 'xyzt・その時刻まで') + '）　横＝地図の横方向（← ' + QC.dirName(az + 180) + '　' + QC.dirName(az) + ' →）　縦＝深さ 0〜' + Math.round(maxKm) + 'km', 48 * scale, top + 2 * scale);
+    var tailTxt = total.toLocaleString() + '回・' + (T == null ? km.clusters.length + '塊' : '全体' + km.clusters.length + '塊（同時に約' + km.active + '）') +
+      (deep ? '・深すぎて範囲外 ' + deep + '塊' : '') + (km.noDep ? '・深さ不明 ' + km.noDep : '');
+    var room = Wv - XS.right * scale - ctx.measureText(tailTxt).width - 60 * scale;
+    var headTxt = '断面図（k-means ' + (T == null ? 'xyz・期間の合計' : 'xyzt・その時刻まで') + '）　横＝地図の横方向（← ' + QC.dirName(az + 180) + '　' + QC.dirName(az) + ' →）　縦＝深さ 0〜' + Math.round(maxKm) + 'km';
+    if (ctx.measureText(headTxt).width > room) headTxt = '断面図（k-means）← ' + QC.dirName(az + 180) + '　' + QC.dirName(az) + ' →　0〜' + Math.round(maxKm) + 'km';   // 幅が足りなければ短く
+    ctx.fillText(headTxt, 48 * scale, top + 2 * scale);
     ctx.textAlign = 'right';
-    ctx.fillText(total.toLocaleString() + '回・' + km.clusters.length + '塊' + (deep ? '・深すぎて範囲外 ' + deep + '塊' : '') + (km.noDep ? '・深さ不明 ' + km.noDep : ''), Wv - XS.right * scale, top + 2 * scale);
+    ctx.fillText(tailTxt, Wv - XS.right * scale, top + 2 * scale);
     ctx.restore();
   }
   function drawAggLabel(ctx, x, y, r, g, scale) {
@@ -886,7 +920,7 @@
   }
   function aggNote() {
     if (S.aggMethod === 'kmeans') return '集合マーカー：k-means（震源の' + (sumView() ? '東西・南北・深さの3次元' : '東西・南北・深さ・時間の4次元') +
-      '）で地図に見えている範囲の地震を' + S.aggK + '個にまとめ、位置＝中心に近い実際の震央、大きさと色＝推定エネルギーの合計（M相当）、数字＝' +
+      '）で地図に見えている範囲の地震を' + (sumView() ? S.aggK + '個に' : '同時に約' + S.aggK + '個見えるように') + 'まとめ、位置＝中心に近い実際の震央、大きさと色＝推定エネルギーの合計（M相当）、数字＝' +
       { meq: 'M相当', count: '回数', energy: 'エネルギー' }[S.aggLabel] + '、点線＝塊の広がり';
     return '集合マーカー：' + (sumView() ? '期間内' : windowText()) + 'の地震を格子でまとめ、大きさと色＝推定エネルギーの合計（M相当）、数字＝' +
       { meq: 'M相当', count: '回数', energy: 'エネルギー' }[S.aggLabel] + '。合計はほぼ最大の地震で決まる';
