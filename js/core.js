@@ -320,16 +320,33 @@
   /** 格子でまとめる。xs, ys は同じ座標系（画素）、cell は格子の大きさ。
    *  戻り値は塊ごとの { x, y（回数で重み付けした重心）, n, E, maxM, maxI（最大の地震の番号） }。エネルギーの小さい順。 */
   function aggregate(xs, ys, ms, ids, cell) {
-    var map = {}, out = [];
-    for (var j = 0; j < xs.length; j++) {
-      var key = Math.floor(xs[j] / cell) + ',' + Math.floor(ys[j] / cell), g = map[key];
-      if (!g) { g = map[key] = { x: 0, y: 0, n: 0, E: 0, maxM: -Infinity, maxI: -1 }; out.push(g); }
-      g.x += xs[j]; g.y += ys[j]; g.n++; g.E += energyJ(ms[j]);
-      if (ms[j] > g.maxM) { g.maxM = ms[j]; g.maxI = ids[j]; }
-    }
-    out.forEach(function (g) { g.x /= g.n; g.y /= g.n; g.meq = magOfEnergy(g.E); });
+    var s = aggState(cell);
+    for (var j = 0; j < xs.length; j++) aggAdd(s, xs[j], ys[j], ms[j], ids[j]);
+    return aggFinish(s);
+  }
+  /** 少しずつ足していける集計（累積の再生で、前のコマから増えた地震だけを足す） */
+  function aggState(cell) { return { cell: cell, map: new Map(), groups: [] }; }
+  function aggAdd(s, x, y, m, id) {
+    // 格子の番号を 1 つの数にまとめる（文字列より速い。座標は数千万画素まで）
+    var key = (Math.floor(x / s.cell) + 1e7) * 1e8 + (Math.floor(y / s.cell) + 1e7), g = s.map.get(key);
+    if (!g) { g = { sx: 0, sy: 0, n: 0, E: 0, maxM: -Infinity, maxI: -1 }; s.map.set(key, g); s.groups.push(g); }
+    g.sx += x; g.sy += y; g.n++; g.E += energyJ(m);
+    if (m > g.maxM) { g.maxM = m; g.maxI = id; }
+  }
+  function aggFinish(s) {
+    var out = s.groups.map(function (g) {
+      return { x: g.sx / g.n, y: g.sy / g.n, n: g.n, E: g.E, maxM: g.maxM, maxI: g.maxI, meq: magOfEnergy(g.E) };
+    });
     out.sort(function (a, b) { return a.E - b.E; });
     return out;
+  }
+  /** idx（時刻順）のうち、tLo < 時刻 ≦ tHi の地震の位置 [k0, k1) */
+  function idxRange(ev, idx, tLo, tHi) {
+    var lo = 0, hi = idx.length;
+    while (lo < hi) { var m = (lo + hi) >> 1; if (ev.t[idx[m]] <= tLo) lo = m + 1; else hi = m; }
+    var k0 = lo; hi = idx.length;
+    while (lo < hi) { m = (lo + hi) >> 1; if (ev.t[idx[m]] <= tHi) lo = m + 1; else hi = m; }
+    return [k0, lo];
   }
   /** 集合マーカーの半径（px）：M 相当が 1 増えるごとに step px 大きく。小さすぎ・大きすぎは切る */
   function aggRadius(meq, s) { return Math.max(s.aggMin, Math.min(s.aggMax, s.aggMin + (meq - s.aggBase) * s.aggStep)); }
@@ -408,7 +425,7 @@
     DEP_COLORS: DEP_COLORS, DEP_UNKNOWN: DEP_UNKNOWN, INT_STYLES: INT_STYLES, INT_UNKNOWN: INT_UNKNOWN,
     intensityStyle: intensityStyle, colorOf: colorOf, styleOf: styleOf, ageColor: ageColor, alphas: alphas,
     visibleAt: visibleAt, depthLook: depthLook, energyJ: energyJ, magOfEnergy: magOfEnergy, formatEnergy: formatEnergy,
-    aggregate: aggregate, aggRadius: aggRadius, computeStats: computeStats, rotScreen: rotScreen, rotDelta: rotDelta,
+    aggregate: aggregate, aggState: aggState, aggAdd: aggAdd, aggFinish: aggFinish, aggRadius: aggRadius, idxRange: idxRange, computeStats: computeStats, rotScreen: rotScreen, rotDelta: rotDelta,
     screenXAzimuth: screenXAzimuth, dirName: dirName, depthTicks: depthTicks, project0: project0, estIntensity: estIntensity, INT_THRESHOLDS: INT_THRESHOLDS,
     RING_LEVELS: RING_LEVELS, ringRadiiKm: ringRadiiKm, sphereRadiusKm: sphereRadiusKm, geomSphereRadiusKm: geomSphereRadiusKm, surfaceRadiusKm: surfaceRadiusKm, pxPerKm: pxPerKm, dailyCounts: dailyCounts, timeTicks: timeTicks
   };

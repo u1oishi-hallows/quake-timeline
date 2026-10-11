@@ -67,6 +67,12 @@ details.sub[open] > summary { margin-bottom: 4px; }
 body:not(.circle) #depthBox { opacity: .55; }
 .sphereOnly { display: none; border-left: 3px solid var(--line); padding-left: 8px; margin: 4px 0 8px; }
 body.sphere .sphereOnly { display: block; }
+.aggOnly, .taggOnly { display: none; } body.agg .aggOnly { display: block; } body.tagg .taggOnly { display: flex; }
+#xsecBox { position: relative; }
+#xsecBtns { position: absolute; right: 4px; top: 1px; display: flex; gap: 2px; }
+#xsecBtns button { font-size: 11px; padding: 0 6px; line-height: 15px; background: var(--panel); }
+#xsecBtns button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+#xsecShow { display: none; width: 100%; font-size: 11px; padding: 1px 6px; text-align: left; border-radius: 0; border-left: 0; border-right: 0; background: var(--panel); color: var(--sub); }
 .ringsOnly { display: none; border-left: 3px solid var(--line); padding-left: 8px; margin: 4px 0 8px; }
 body.rings .ringsOnly { display: block; }
 .geomOnly { display: none; } body.sphereGeom .geomOnly { display: block; } body.sphereGeom .estOnly { display: none; }
@@ -115,7 +121,9 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     <div id="tip"></div>
   </div>
   <div id="charts">
-    <canvas id="xsec" height="170"></canvas>
+    <div id="xsecBox"><canvas id="xsec" height="170"></canvas>
+      <div id="xsecBtns"><button data-s="S" title="断面図を小さく">小</button><button data-s="M">中</button><button data-s="L" title="断面図を大きく">大</button><button id="xsecHide" title="断面図を隠す">隠す</button></div></div>
+    <button id="xsecShow">▸ 断面図を出す</button>
     <canvas id="mtChart" height="110"></canvas>
     <canvas id="cntChart" height="70"></canvas>
   </div>
@@ -123,7 +131,12 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     <fieldset>
       <legend class="fs">時間</legend>
       <label>表示
-        <select id="mode"><option value="time">時間に沿って</option><option value="sum">期間の合計（集合マーカー）</option></select></label>
+        <select id="mode"><option value="time">時間に沿って（1つずつ）</option><option value="timeAgg">時間に沿って（集合マーカー）</option><option value="sum">期間の合計（集合マーカー）</option></select></label>
+      <div class="aggOnly">
+        <label>まとめる細かさ <span class="note" style="margin:0">細かい</span><input type="range" id="aggCell" min="16" max="160" step="4" style="width:110px"><span class="note" style="margin:0">粗い</span></label>
+        <label class="taggOnly">まとめる時間の幅
+          <select id="aggWindow"><option value="1">直近1日</option><option value="7">直近7日</option><option value="30">直近30日</option><option value="cum">期間の始めから（累積）</option></select></label>
+      </div>
       <div id="playrow">
         <button id="playBtn" class="primary">▶ 再生</button>
         <button id="backBtn" title="1コマ戻る">◀</button>
@@ -196,9 +209,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
         <summary>集合マーカー（期間の合計）</summary>
         <label>マーカーの数字
           <select id="aggLabel"><option value="meq">M 相当（エネルギーの合計）</option><option value="count">回数</option><option value="energy">エネルギー（J）</option></select></label>
-        <label>まとめる格子の大きさ（px） <input type="number" id="aggCell" step="8" min="16" max="200"></label>
         <label>M 相当が 1 増えるごとに大きく（px） <input type="number" id="aggStep" step="0.5" min="1" max="20"></label>
-        <div class="note">期間内の地震を、地図の上で近いものどうし格子でまとめます（拡大・縮小するとまとめ直します）。大きさと色は推定エネルギーの合計を M に置き換えた「M 相当」。エネルギーはグーテンベルク・リヒター(1956)の式 log E = 1.5M + 4.8（J）による推定です。M が 1 増えるとエネルギーは約 32 倍なので、合計はほぼ最大の地震で決まります（回数の多さは数字を「回数」にすると見えます）。</div>
+        <div class="note">地震を、地図の上で近いものどうし格子でまとめます（拡大・縮小するとまとめ直します。細かさは「時間」の欄のつまみで）。「時間に沿って（集合マーカー）」では、いまの時刻までの「まとめる時間の幅」の地震だけをまとめます。大きさと色は推定エネルギーの合計を M に置き換えた「M 相当」。エネルギーはグーテンベルク・リヒター(1956)の式 log E = 1.5M + 4.8（J）による推定です。M が 1 増えるとエネルギーは約 32 倍なので、合計はほぼ最大の地震で決まります（回数の多さは数字を「回数」にすると見えます）。</div>
       </details>
       <details id="depthBox" class="sub">
         <summary>奥行き（深さの見え方）</summary>

@@ -295,6 +295,24 @@ t('集計：格子でまとめ、回数・エネルギー・最大の地震・�
   assert.strictEqual(QC.aggRadius(4, s), 16);
   assert.strictEqual(QC.aggRadius(12, s), 40);
 });
+t('時間の幅で切り出す：開始は含まず、終わり（T）は含む', function () {
+  var ev = evOf(['2024-01-01T00:00:00.0,35,135,10,2,,P,,', '2024-01-02T00:00:00.0,35,135,10,2,,P,,',
+                 '2024-01-03T00:00:00.0,35,135,10,2,,P,,', '2024-01-04T00:00:00.0,35,135,10,2,,P,,']);
+  var f = QC.filterEvents(ev, S, -Infinity, Infinity);
+  assert.deepStrictEqual(QC.idxRange(ev, f.idx, QC.parseJst('2024-01-01T00:00:00.0'), QC.parseJst('2024-01-03T00:00:00.0')), [1, 3]);
+  assert.deepStrictEqual(QC.idxRange(ev, f.idx, -Infinity, QC.parseJst('2024-01-02T12:00')), [0, 2]);
+  assert.deepStrictEqual(QC.idxRange(ev, f.idx, QC.parseJst('2024-01-05T00:00'), Infinity), [4, 4]);
+  // 遠く離れた座標（大きな倍率）でも、別の格子を取り違えない
+  var g = QC.aggregate([1e7, 1e7 + 5, 1e7 + 60], [3e6, 3e6, 3e6], [3, 3, 3], [0, 1, 2], 50);
+  assert.strictEqual(g.length, 2);
+  assert.strictEqual(QC.aggregate([5, 5], [5, 500], [3, 3], [0, 1], 50).length, 2);   // 横は同じ格子・縦は別の格子
+  // 少しずつ足しても、まとめて数えたのと同じ答え（途中で aggFinish しても、足した値は壊れない）
+  var xs = [1, 2, 30, 31, 33], ys = [1, 3, 1, 1, 2], ms = [3, 5, 4, 4, 6], ids = [0, 1, 2, 3, 4], s2 = QC.aggState(20);
+  for (var j = 0; j < 3; j++) QC.aggAdd(s2, xs[j], ys[j], ms[j], ids[j]);
+  QC.aggFinish(s2);
+  for (j = 3; j < 5; j++) QC.aggAdd(s2, xs[j], ys[j], ms[j], ids[j]);
+  assert.deepStrictEqual(QC.aggFinish(s2), QC.aggregate(xs, ys, ms, ids, 20));
+});
 t('まとめ：回数・最大・震度・最多の日・深さ', function () {
   var ev = evOf([
     '2024-01-01T08:00:00.0,35,135,10,3.2,1,P,,',
