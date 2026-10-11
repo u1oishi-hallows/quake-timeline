@@ -22,6 +22,7 @@
     ripple: true, rippleMinM: 3, rippleFrames: 12,
     shape: 'circle', sphereKind: 'est', sphereInt: '4', sphereAmp: 1.31, sphereFade: 300, sphereR5: 30, sphereGrowth: 2,
     ringFrom: '3', ringMinM: 3.5,
+    bearing: 0, xsDepth: 'equal', showXsec: true, showMt: true, chartView: true,
     vol: 0.5, viewH: 100, dShrink: true, dBlur: 1, dHaze: 1, hazeMin: 0.25, keepBig: true, keepBigM: 7,
     fillAlpha: 0.55, strokeAlpha: 0.9, fadePow: 0.7,
     step: 6 * HOUR, fps: 30, base: 'pale', t0: '', t1: '',
@@ -29,9 +30,9 @@
   };
   var NUM = ['magMin', 'intMin', 'depMin', 'depMax', 'r1', 'sizeGrowth', 'life1', 'lifeGrowth', 'lifeMax',
              'rippleMinM', 'step', 'fps', 'sphereAmp', 'sphereFade', 'sphereR5', 'sphereGrowth', 'ringMinM',
-             'vol', 'viewH', 'dBlur', 'dHaze', 'hazeMin', 'keepBigM'];
-  var BOOL = ['lowFreq', 'reference', 'ripple', 'dShrink', 'keepBig'];
-  var STR = ['colorMode', 'sizeScale', 'base', 't0', 't1', 'shape', 'sphereInt', 'sphereKind', 'ringFrom'];
+             'vol', 'viewH', 'dBlur', 'dHaze', 'hazeMin', 'keepBigM', 'bearing'];
+  var BOOL = ['lowFreq', 'reference', 'ripple', 'dShrink', 'keepBig', 'showXsec', 'showMt', 'chartView'];
+  var STR = ['colorMode', 'sizeScale', 'base', 't0', 't1', 'shape', 'sphereInt', 'sphereKind', 'ringFrom', 'xsDepth'];
 
   var S = Object.assign({}, DEFAULTS);
   var st = {
@@ -85,6 +86,9 @@
     else if (RELIFE.indexOf(k) >= 0) { computeLife(); }
     else if (RESPHERE.indexOf(k) >= 0) { computeSpheres(); }
     if (k === 'shape' || k === 'sphereKind' || k === 'vol') applyShapeClass();
+    if (k === 'bearing') { layoutRot(); scheduleViewIdx(); }
+    if (k === 'showXsec' || k === 'showMt') applyChartVisibility();
+    if (k === 'chartView') { computeViewIdx(); renderChartBases(); }
     if (k === 'colorMode' || REFILTER.indexOf(k) >= 0) renderChartBases();
     if (k === 'step') syncSlider();
     renderLegend();
@@ -95,40 +99,86 @@
   // ---------------------------------------------------------------- 地図
   var map, baseLayer;
   function initMap() {
+    layoutRot(true);
+    // ＋−と出典は回転しない層に自前で置く（Leaflet の部品は回転する枠の中に入ってしまうため）
     map = L.map('map', { center: [37.5, 137.5], zoom: 5, minZoom: 2, maxZoom: 18, zoomSnap: 0.5,
-                         preferCanvas: true, attributionControl: true, zoomControl: false });
-    L.control.zoom({ position: 'topright' }).addTo(map);
-    map.attributionControl.setPrefix(false);
+                         preferCanvas: true, attributionControl: false, zoomControl: false });
     setBase();
-    var c = $('quakeCanvas');
+    var c = $('quakeCanvas'), wrap = $('mapwrap');
     map.on('move zoomend resize viewreset', function () { sizeCanvas(); drawMap(); });
+    map.on('moveend zoomend resize', scheduleViewIdx);
     map.on('zoomstart', function () { c.style.visibility = 'hidden'; });
     map.on('zoomend', function () { c.style.visibility = ''; });
-    map.getContainer().addEventListener('mousemove', onHover);
-    map.getContainer().addEventListener('mouseleave', function () { $('tip').style.display = 'none'; });
+    wrap.addEventListener('mousemove', onHover);
+    wrap.addEventListener('mouseleave', function () { $('tip').style.display = 'none'; });
+    $('zIn').onclick = function () { if (!st.rec) map.zoomIn(); };
+    $('zOut').onclick = function () { if (!st.rec) map.zoomOut(); };
+    $('north').onclick = function () { if (st.rec) return; S.bearing = 0; $('bearing').value = 0; settingsChanged('bearing'); };
+    bindRotatedDrag(wrap);
+    layoutRot();
     sizeCanvas();
-    // 地図の枠の大きさが変わったら Leaflet に知らせる（知らせないとタイルが欠ける）
-    if (window.ResizeObserver) new ResizeObserver(function () { map.invalidateSize(false); }).observe($('map'));
+    // 地図の枠の大きさが変わったら、回転用の枠を作り直して Leaflet に知らせる（知らせないとタイルが欠ける）
+    if (window.ResizeObserver) new ResizeObserver(function () { layoutRot(); }).observe(wrap);
+  }
+  /** 画面（地図の見える範囲）の大きさ */
+  function viewSize() { var w = $('mapwrap'); return { W: w.clientWidth, H: w.clientHeight }; }
+  function rotated() { return ((S.bearing % 360) + 360) % 360 !== 0; }
+  /** 回転用の枠の大きさと向きを決める。回すときは、どの向きでも画面を覆えるよう対角線の長さの正方形にする */
+  function layoutRot(noMap) {
+    var v = viewSize(), w = v.W, h = v.H, rot = $('rot');
+    if (rotated()) { w = h = Math.ceil(Math.hypot(v.W, v.H)) + 2; }
+    rot.style.width = w + 'px'; rot.style.height = h + 'px';
+    rot.style.transform = 'translate(-50%, -50%) rotate(' + S.bearing + 'deg)';
+    $('northSvg').style.transform = 'rotate(' + S.bearing + 'deg)';
+    if ($('bearingV')) $('bearingV').textContent = S.bearing + '°';
+    if (noMap || !map) return;
+    map.invalidateSize();                 // 中心は保ったまま大きさだけ変わる
+    var r = rotated();                    // 回している間は、拡大の基準を地図の中心にする（マウスの位置は回転を考えないため）
+    map.options.scrollWheelZoom = r ? 'center' : true;
+    map.options.doubleClickZoom = r ? 'center' : true;
+    map.options.touchZoom = r ? 'center' : true;
+    if (!st.rec) { if (r) map.dragging.disable(); else map.dragging.enable(); }
+    sizeCanvas(); drawMap();
+  }
+  /** 回しているときのドラッグ：画面での動きを逆に回して地図に渡す */
+  function bindRotatedDrag(wrap) {
+    var last = null, ids = {};
+    wrap.addEventListener('pointerdown', function (e) {
+      ids[e.pointerId] = true;
+      if (!rotated() || st.rec || e.button !== 0 || e.target.closest('#mapCtl,#sideTab,#attrib')) return;
+      if (Object.keys(ids).length > 1) { last = null; return; }     // 2 本指は Leaflet の拡大に任せる
+      last = [e.clientX, e.clientY];
+    });
+    wrap.addEventListener('pointermove', function (e) {
+      if (!last || !rotated()) return;
+      var d = QC.rotDelta(e.clientX - last[0], e.clientY - last[1], S.bearing);
+      last = [e.clientX, e.clientY];
+      map.panBy([-d[0], -d[1]], { animate: false });
+    });
+    var up = function (e) { delete ids[e.pointerId]; last = null; };
+    wrap.addEventListener('pointerup', up); wrap.addEventListener('pointercancel', up);
   }
   function setBase() {
     var b = BASES[S.base] || BASES.pale;
-    var opt = { maxZoom: 18, maxNativeZoom: b.maxZoom, minZoom: b.minZoom, crossOrigin: 'anonymous',
-                attribution: '<a href="https:' + '/' + '/maps.gsi.go.jp/development/ichiran.html" target="_blank">地理院タイル</a>｜震源：気象庁' };
+    var opt = { maxZoom: 18, maxNativeZoom: b.maxZoom, minZoom: b.minZoom, crossOrigin: 'anonymous' };
     if (baseLayer) map.removeLayer(baseLayer);
     baseLayer = L.tileLayer(b.url, opt).addTo(map);
     baseLayer.bringToBack();
   }
   function sizeCanvas() {
-    var c = $('quakeCanvas'), w = map.getSize(), dpr = window.devicePixelRatio || 1;
-    if (c.width !== Math.round(w.x * dpr) || c.height !== Math.round(w.y * dpr)) {
-      c.width = Math.round(w.x * dpr); c.height = Math.round(w.y * dpr);
-      c.style.width = w.x + 'px'; c.style.height = w.y + 'px';
+    var c = $('quakeCanvas'), v = viewSize(), dpr = window.devicePixelRatio || 1;
+    if (c.width !== Math.round(v.W * dpr) || c.height !== Math.round(v.H * dpr)) {
+      c.width = Math.round(v.W * dpr); c.height = Math.round(v.H * dpr);
+      c.style.width = v.W + 'px'; c.style.height = v.H + 'px';
     }
   }
-  /** 今の地図の見え方で、zoom 0 の画素 → 画面の画素 */
-  function viewTransform() {
-    var z = map.getZoom(), k = Math.pow(2, z), o = map.getPixelBounds().min;
-    return { k: k, ox: o.x, oy: o.y };
+  /** 今の地図の見え方で、地震 i の画面上の位置（回転を含む）。scale は動画の拡大率 */
+  function makeProj(scale) {
+    var k = Math.pow(2, map.getZoom()), o = map.getPixelBounds().min, ms = map.getSize(), v = viewSize(), b = S.bearing;
+    return function (i) {
+      var p = QC.rotScreen(st.px[i] * k - o.x, st.py[i] * k - o.y, ms.x, ms.y, v.W, v.H, b);
+      return [p[0] * scale, p[1] * scale];
+    };
   }
 
   // ---------------------------------------------------------------- データ
@@ -169,6 +219,7 @@
     if (!st.ev) return;
     st.f = QC.filterEvents(st.ev, S, st.t0, st.t1);
     computeLife();
+    computeViewIdx();
     renderDropped();
   }
   function computeLife() {
@@ -251,9 +302,9 @@
     var c = $('quakeCanvas'), ctx = c.getContext('2d'), dpr = window.devicePixelRatio || 1;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, c.width, c.height);
-    var tr = viewTransform(), sz = map.getSize();
-    st.drawn = drawQuakes(ctx, st.T, function (i) { return [st.px[i] * tr.k - tr.ox, st.py[i] * tr.k - tr.oy]; },
-                          1, sz.x, sz.y);
+    var v = viewSize();
+    st.drawn = drawQuakes(ctx, st.T, makeProj(1), 1, v.W, v.H);
+    drawXsecScreen();
   }
   /** 地震を描く（画面と動画で共通）。描いたものの位置を返す（吹き出し用）。 */
   function drawQuakes(ctx, T, proj, scale, W, H) {
@@ -300,7 +351,7 @@
         ctx.beginPath(); ctx.arc(p[0], p[1], r + g * (12 + 2.5 * r) * 1, 0, 2 * Math.PI);
         ctx.globalAlpha = 0.9 * (1 - g); ctx.lineWidth = 2 * scale; ctx.stroke();
       }
-      drawn.push([p[0], p[1], r, i]);
+      drawn.push([p[0], p[1], r, i, k]);
     }
     ctx.globalAlpha = 1;
     return drawn;
@@ -406,7 +457,7 @@
 
   function onHover(e) {
     if (!st.drawn || st.rec) return;
-    var rc = map.getContainer().getBoundingClientRect(), x = e.clientX - rc.left, y = e.clientY - rc.top;
+    var rc = $('mapwrap').getBoundingClientRect(), x = e.clientX - rc.left, y = e.clientY - rc.top;
     var best = null, bd = Infinity;
     for (var n = st.drawn.length - 1; n >= 0; n--) {   // 上に描いた（小さい）ものを先に
       var d = st.drawn[n], dist = Math.hypot(d[0] - x, d[1] - y);
@@ -509,12 +560,104 @@
     }
   }
 
+  // ---------------------------------------------------------------- 断面図（横＝画面の横方向、縦＝深さ）
+  var XS = { top: 16, bottom: 6 };
+  /** 断面図の縦の範囲（km）。「縦横同じ縮尺」は地図の 1 画素と同じ km を縦にも使う */
+  function xsecMaxKm(innerH, scale) {
+    if (S.xsDepth !== 'equal') return +S.xsDepth;
+    return innerH / (QC.pxPerKm(map.getCenter().lat, map.getZoom()) * scale);
+  }
+  /** 断面図を描く。drawn は drawQuakes が返した [x, y, 半径, i, k]（ctx の単位）。
+   *  画面に見えている（0≦x≦Wv、0≦y≦Hv）地震だけを、同じ x に、深さを縦にして描く。 */
+  function drawXsec(ctx, drawn, Wv, Hv, top, height, scale, T, bg, ink, sub) {
+    var ev = st.ev, ih = height - (XS.top + XS.bottom) * scale, maxKm = xsecMaxKm(ih, scale), y0 = top + XS.top * scale;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, top, Wv, height); ctx.clip();
+    ctx.fillStyle = bg; ctx.fillRect(0, top, Wv, height);
+    // 深さの目盛り
+    ctx.font = 10 * scale + 'px sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    QC.depthTicks(maxKm).forEach(function (d) {
+      var y = y0 + ih * d / maxKm;
+      ctx.globalAlpha = d === 0 ? 0.8 : 0.3; ctx.fillStyle = sub; ctx.fillRect(0, y, Wv, d === 0 ? 1.2 * scale : 0.8 * scale);
+      ctx.globalAlpha = 1; ctx.fillText(d + 'km', 4 * scale, y + 7 * scale);
+    });
+    var deep = 0, noDep = 0, n = 0;
+    if (drawn && ev) {
+      for (var q = 0; q < drawn.length; q++) {
+        var x = drawn[q][0], ys = drawn[q][1], i = drawn[q][3], k = drawn[q][4];
+        if (x < 0 || x > Wv || ys < 0 || ys > Hv) continue;
+        var d = ev.dep[i];
+        if (isNaN(d)) { noDep++; continue; }
+        if (d > maxKm) { deep++; continue; }
+        var m = ev.mag[i], f = (T - ev.t[i]) / st.life[k];
+        var sty = QC.styleOf(S.colorMode, m, d, f, ev.maxi[i]), a = QC.alphas(m, f, S);
+        var r = Math.min(QC.radius(m, S), 14) * scale, y = y0 + ih * Math.max(d, 0) / maxKm;
+        ctx.beginPath(); ctx.arc(x, y, Math.max(r, 1.2 * scale), 0, 2 * Math.PI);
+        ctx.fillStyle = sty.fill; ctx.globalAlpha = Math.max(a.fill, 0.25); ctx.fill();
+        ctx.strokeStyle = sty.stroke; ctx.globalAlpha = a.stroke; ctx.lineWidth = 0.8 * scale; ctx.stroke();
+        n++;
+      }
+    }
+    ctx.globalAlpha = 1;
+    // 見出し：横の向き（両端の方位）と縦の縮尺
+    var az = QC.screenXAzimuth(S.bearing), kmPx = 1 / (QC.pxPerKm(map.getCenter().lat, map.getZoom()) * scale);
+    var exag = (maxKm / ih) > 0 ? kmPx / (maxKm / ih) : 1;
+    var head = '断面図　横＝地図の横方向（← ' + QC.dirName(az + 180) + '　' + QC.dirName(az) + ' →）　縦＝深さ 0〜' + Math.round(maxKm) + 'km' +
+      (S.xsDepth === 'equal' ? '（縦横同じ縮尺）' : '（縦は横の約' + (exag >= 10 ? Math.round(exag) : exag.toFixed(1)) + '倍）');
+    var tail = n + '件' + (deep ? '・深すぎて範囲外 ' + deep : '') + (noDep ? '・深さ不明 ' + noDep : '');
+    ctx.font = 11 * scale + 'px sans-serif'; ctx.textBaseline = 'top'; ctx.fillStyle = ink;
+    ctx.textAlign = 'left'; ctx.fillText(head, 48 * scale, top + 2 * scale);
+    ctx.textAlign = 'right'; ctx.fillText(tail, Wv - 6 * scale, top + 2 * scale);
+    ctx.restore();
+  }
+  function drawXsecScreen() {
+    var c = $('xsec');
+    if (!S.showXsec || !c.clientWidth) return;
+    var g = fitCanvas(c), ctx = c.getContext('2d'), v = viewSize();
+    ctx.setTransform(g.dpr, 0, 0, g.dpr, 0, 0);
+    drawXsec(ctx, st.drawn, Math.min(g.W, v.W), v.H, 0, g.H, 1, st.T, cssVar('--chart-bg'), cssVar('--ink'), cssVar('--sub'));
+  }
+  function applyChartVisibility() {
+    $('xsec').style.display = S.showXsec ? '' : 'none';
+    $('mtChart').style.display = $('cntChart').style.display = S.showMt ? '' : 'none';
+    renderChartBases(); drawAll();
+  }
+
+  // ---------------------------------------------------------------- グラフを地図の表示範囲に絞る
+  /** 地図に見えている範囲（回転を含む）にある、描く対象の地震 */
+  function computeViewIdx() {
+    if (!st.f || !map) return;
+    var proj = makeProj(1), v = viewSize(), idx = st.f.idx, out = [];
+    for (var k = 0; k < idx.length; k++) {
+      var p = proj(idx[k]);
+      if (p[0] >= 0 && p[0] <= v.W && p[1] >= 0 && p[1] <= v.H) out.push(idx[k]);
+    }
+    st.viewIdx = Int32Array.from(out);
+  }
+  var viewTimer = 0;
+  function scheduleViewIdx() {
+    if (!S.chartView) return;
+    clearTimeout(viewTimer);
+    viewTimer = setTimeout(function () { computeViewIdx(); renderChartBases(); drawCharts(); }, 250);
+  }
+  function chartIdx() { return S.chartView && st.viewIdx ? st.viewIdx : st.f.idx; }
+  function chartScopeLabel() { return S.chartView ? '地図に見えている範囲の地震' : '期間内の全域の地震'; }
+
+  // ---------------------------------------------------------------- 操作盤の出し入れ
+  function setSideHidden(h) {
+    document.body.classList.toggle('sideHidden', h);
+    $('sideTab').textContent = h ? '◀ 操作盤' : '操作盤 ▶';
+    try { localStorage.setItem('quake.sideHidden', h ? '1' : '0'); } catch (e) { /* 保存できなくても動く */ }
+  }
+
   // ---------------------------------------------------------------- グラフ（M-T 図と 1 日の回数）
   var CH = { left: 34, right: 8, top: 8, bottom: 16 };
   function chartX(t, W) { return CH.left + (W - CH.left - CH.right) * (t - st.t0) / (st.t1 - st.t0); }
   function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim() || '#888'; }
   function fitCanvas(c) {
-    var dpr = window.devicePixelRatio || 1, w = c.clientWidth || 600, h = +c.getAttribute('height');
+    // 元の高さ（CSS の画素）は最初に控える。height 属性は高精細画面用に書き換わるので、毎回は読まない
+    if (!c.dataset.h) c.dataset.h = c.getAttribute('height');
+    var dpr = window.devicePixelRatio || 1, w = c.clientWidth || 600, h = +c.dataset.h;
     if (c.width !== Math.round(w * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); c.style.height = h + 'px'; }
     return { W: w, H: h, dpr: dpr };
   }
@@ -543,7 +686,9 @@
       ctx.fillRect(xa, 0, Math.max(xb - xa, 0.5), 3);
     }
     drawCatalogChanges(ctx, W, H, sub, false);
-    var ev = st.ev, idx = st.f.idx;
+    ctx.save(); ctx.fillStyle = sub; ctx.font = '10px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillText('M-T図（' + chartScopeLabel() + '）', CH.left + 4, 5); ctx.restore();
+    var ev = st.ev, idx = chartIdx();
     for (var k = 0; k < idx.length; k++) {
       var i = idx[k], mg = ev.mag[i];
       ctx.fillStyle = S.colorMode === 'age' ? sub : S.colorMode === 'maxi' ? QC.styleOf('maxi', mg, 0, 0, ev.maxi[i]).stroke
@@ -575,7 +720,7 @@
   function buildCntBase(W, H, dpr, sub) {
     var c = document.createElement('canvas'); c.width = W * dpr; c.height = H * dpr;
     var ctx = c.getContext('2d'); ctx.scale(dpr, dpr);
-    var dc = QC.dailyCounts(st.ev, st.f.idx, st.t0, st.t1), mx = 1;
+    var dc = QC.dailyCounts(st.ev, chartIdx(), st.t0, st.t1), mx = 1;
     for (var j = 0; j < dc.counts.length; j++) mx = Math.max(mx, dc.counts[j]);
     var ih = H - CH.top - CH.bottom;
     ctx.fillStyle = cssVar('--accent');
@@ -587,20 +732,20 @@
     ctx.fillStyle = sub; ctx.font = '10px sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'top';
     ctx.fillText(mx.toLocaleString(), CH.left - 4, CH.top - 2);
     ctx.textBaseline = 'bottom'; ctx.fillText('0', CH.left - 4, CH.top + ih + 4);
-    ctx.save(); ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText('1日あたりの回数（描く対象）', CH.left + 4, CH.top - 2); ctx.restore();
+    ctx.save(); ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText('1日あたりの回数（' + chartScopeLabel() + '）', CH.left + 4, CH.top - 2); ctx.restore();
     drawCatalogChanges(ctx, W, H, sub, true);
     drawTimeAxis(ctx, W, H, sub);
     return c;
   }
   function renderChartBases() {
-    if (!st.f) return;
+    if (!st.f || !S.showMt || !$('mtChart').clientWidth) return;
     var ink = cssVar('--ink'), sub = cssVar('--sub');
     var a = fitCanvas($('mtChart')), b = fitCanvas($('cntChart'));
     st.mtBase = buildMtBase(a.W, a.H, a.dpr, ink, sub);
     st.cntBase = buildCntBase(b.W, b.H, b.dpr, sub);
   }
   function drawCharts() {
-    if (!st.mtBase) return;
+    if (!st.mtBase || !S.showMt) return;
     [['mtChart', st.mtBase], ['cntChart', st.cntBase]].forEach(function (p) {
       var c = $(p[0]), g = fitCanvas(c), ctx = c.getContext('2d');
       if (p[1].width !== c.width) { renderChartBases(); return drawCharts(); }
@@ -711,27 +856,41 @@
     for (var i = 0; i < c.length; i++) if (window.MediaRecorder && MediaRecorder.isTypeSupported(c[i])) return c[i];
     return null;
   }
-  /** 地図のタイル（読み込み済みの img）を 1 枚の canvas に写す */
-  function snapshotTiles(W, H, scale) {
-    var c = document.createElement('canvas'); c.width = W * scale; c.height = H * scale;
-    var ctx = c.getContext('2d'), rc = map.getContainer().getBoundingClientRect(), miss = 0;
-    ctx.fillStyle = '#cfe3f2'; ctx.fillRect(0, 0, c.width, c.height);
+  /** 地図のタイル（読み込み済みの img）を、回転する前の枠のまま 1 枚の canvas に写す。
+   *  位置を測る間だけ枠の回転を外す（同じ処理の中で戻すので、画面には出ない）。 */
+  function snapshotTiles(scale) {
+    var rot = $('rot'), prev = rot.style.transform;
+    rot.style.transform = 'translate(-50%, -50%)';
+    var ms = map.getSize(), c = document.createElement('canvas'); c.width = ms.x * scale; c.height = ms.y * scale;
+    var ctx = c.getContext('2d'), rc = map.getContainer().getBoundingClientRect(), miss = 0, items = [];
     map.getContainer().querySelectorAll('.leaflet-tile-pane img').forEach(function (img) {
       var r = img.getBoundingClientRect();
       if (r.right < rc.left || r.bottom < rc.top || r.left > rc.right || r.top > rc.bottom) return;
       if (!img.complete || !img.naturalWidth) { miss++; return; }
-      var op = +getComputedStyle(img.closest('.leaflet-layer') || img).opacity || 1;
-      ctx.globalAlpha = op;
-      ctx.drawImage(img, (r.left - rc.left) * scale, (r.top - rc.top) * scale, r.width * scale, r.height * scale);
+      items.push([img, r.left - rc.left, r.top - rc.top, r.width, r.height, +getComputedStyle(img.closest('.leaflet-layer') || img).opacity || 1]);
     });
+    rot.style.transform = prev;
+    ctx.fillStyle = '#cfe3f2'; ctx.fillRect(0, 0, c.width, c.height);
+    items.forEach(function (t) { ctx.globalAlpha = t[5]; ctx.drawImage(t[0], t[1] * scale, t[2] * scale, t[3] * scale, t[4] * scale); });
     ctx.globalAlpha = 1;
     return { canvas: c, missing: miss };
   }
-  function drawFrame(ctx, bg, W, H, scale, chartH, mtBase) {
+  function drawFrame(ctx, bg, W, H, scale, chartH, mtBase, xsH) {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.drawImage(bg, 0, 0);
-    var tr = viewTransform();
-    drawQuakes(ctx, st.T, function (i) { return [(st.px[i] * tr.k - tr.ox) * scale, (st.py[i] * tr.k - tr.oy) * scale]; }, scale, W * scale, H * scale);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, W * scale, H * scale); ctx.clip();      // 地図の範囲の外（下のグラフ）にはみ出さない
+    ctx.translate(W * scale / 2, H * scale / 2); ctx.rotate(S.bearing * Math.PI / 180);
+    ctx.drawImage(bg, -bg.width / 2, -bg.height / 2);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    var drawn = drawQuakes(ctx, st.T, makeProj(scale), scale, W * scale, H * scale);
+    if (rotated()) {   // 北の向き
+      ctx.save(); ctx.translate(W * scale - 24 * scale, 66 * scale); ctx.rotate(S.bearing * Math.PI / 180);
+      ctx.fillStyle = '#fff'; ctx.globalAlpha = 0.85; ctx.beginPath(); ctx.arc(0, 0, 15 * scale, 0, 2 * Math.PI); ctx.fill(); ctx.globalAlpha = 1;
+      ctx.fillStyle = '#c62828'; ctx.beginPath(); ctx.moveTo(0, -11 * scale); ctx.lineTo(6 * scale, 7 * scale); ctx.lineTo(0, 3 * scale); ctx.lineTo(-6 * scale, 7 * scale); ctx.fill();
+      ctx.fillStyle = '#1d2433'; ctx.font = 8 * scale + 'px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillText('北', 0, 7 * scale);
+      ctx.restore();
+    }
+    ctx.restore();
     // 左上の日付（白い縁取り）
     ctx.font = 'bold ' + 26 * scale + 'px sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
     ctx.lineWidth = 5 * scale; ctx.strokeStyle = '#fff'; ctx.lineJoin = 'round';
@@ -745,26 +904,29 @@
     var cw = ctx.measureText(CREDIT).width;
     ctx.globalAlpha = 0.8; ctx.fillStyle = '#fff'; ctx.fillRect(W * scale - cw - 12 * scale, H * scale - 18 * scale, cw + 12 * scale, 18 * scale);
     ctx.globalAlpha = 1; ctx.fillStyle = '#1d2433'; ctx.fillText(CREDIT, W * scale - 6 * scale, H * scale - 4 * scale);
+    if (xsH) drawXsec(ctx, drawn, W * scale, H * scale, H * scale, xsH * scale, scale, st.T, '#ffffff', '#1d2433', '#5b6475');
     if (chartH) {
-      ctx.fillStyle = '#fff'; ctx.fillRect(0, H * scale, W * scale, chartH * scale);
-      ctx.drawImage(mtBase, 0, H * scale);
+      var cy = (H + xsH) * scale;
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, cy, W * scale, chartH * scale);
+      ctx.drawImage(mtBase, 0, cy);
       var x = chartX(st.T, W) * scale;
-      ctx.globalAlpha = 0.12; ctx.fillStyle = '#5b6475'; ctx.fillRect(x, H * scale, W * scale - x, (chartH - CH.bottom) * scale);
-      ctx.globalAlpha = 1; ctx.fillStyle = '#d81b60'; ctx.fillRect(x - scale, H * scale, 2 * scale, (chartH - CH.bottom) * scale);
+      ctx.globalAlpha = 0.12; ctx.fillStyle = '#5b6475'; ctx.fillRect(x, cy, W * scale - x, (chartH - CH.bottom) * scale);
+      ctx.globalAlpha = 1; ctx.fillStyle = '#d81b60'; ctx.fillRect(x - scale, cy, 2 * scale, (chartH - CH.bottom) * scale);
     }
   }
   function startRecording() {
     var mime = pickMime(), note = $('recNote');
     if (!mime) { note.innerHTML = '<span class="warn">このブラウザは動画の書き出しに対応していません（Chrome・Edge・Safari・Firefox の新しい版で使えます）</span>'; return; }
     play(false);
-    var W = map.getSize().x, H = map.getSize().y, scale = +$('vidScale').value, chartH = $('vidChart').checked ? 110 : 0;
-    var snap = snapshotTiles(W, H, scale);
+    var v = viewSize(), W = v.W, H = v.H, scale = +$('vidScale').value, chartH = $('vidChart').checked ? 110 : 0;
+    var xsH = $('vidXsec').checked ? 170 : 0;
+    var snap = snapshotTiles(scale);
     if (snap.missing) { note.innerHTML = '<span class="warn">地図のタイルがまだ読み込み中です（' + snap.missing + ' 枚）。少し待ってからもう一度押してください。</span>'; return; }
-    var cv = document.createElement('canvas'); cv.width = W * scale; cv.height = (H + chartH) * scale;
+    var cv = document.createElement('canvas'); cv.width = W * scale; cv.height = (H + xsH + chartH) * scale;
     // 幅と高さは偶数にする（動画の符号化の都合）
     cv.width -= cv.width % 2; cv.height -= cv.height % 2;
     var ctx = cv.getContext('2d');
-    try { ctx.drawImage(snap.canvas, 0, 0); cv.toDataURL('image/png').length; }
+    try { ctx.drawImage(snap.canvas, 0, 0); cv.toDataURL('image/png').length; ctx.clearRect(0, 0, cv.width, cv.height); }
     catch (e) { note.innerHTML = '<span class="warn">地図の画像を動画に入れられませんでした（' + e.message + '）</span>'; return; }
     var mtBase = chartH ? buildMtBase(W, chartH, scale, '#1d2433', '#5b6475') : null;
     var stream = cv.captureStream(0), track = stream.getVideoTracks()[0];
@@ -773,10 +935,11 @@
     var total = Math.ceil((st.t1 - st.t0) / S.step) + 1, frame = 0, aborted = false, fps = S.fps;
     st.rec = { stop: function () { aborted = true; } };
     map.dragging.disable(); map.scrollWheelZoom.disable(); map.doubleClickZoom.disable(); map.touchZoom.disable(); map.keyboard.disable();
-    $('recBtn').disabled = true; $('recStop').disabled = false; $('playBtn').disabled = true;
+    $('recBtn').disabled = true; $('recStop').disabled = false; $('playBtn').disabled = true; $('bearing').disabled = true;
     rec.onstop = function () {
-      map.dragging.enable(); map.scrollWheelZoom.enable(); map.doubleClickZoom.enable(); map.touchZoom.enable(); map.keyboard.enable();
-      $('recBtn').disabled = false; $('recStop').disabled = true; $('playBtn').disabled = false; st.rec = null;
+      map.scrollWheelZoom.enable(); map.doubleClickZoom.enable(); map.touchZoom.enable(); map.keyboard.enable();
+      $('recBtn').disabled = false; $('recStop').disabled = true; $('playBtn').disabled = false; $('bearing').disabled = false; st.rec = null;
+      if (!rotated()) map.dragging.enable();
       if (!chunks.length) { note.innerHTML = '<span class="warn">動画が空でした</span>'; return; }
       var ext = mime.indexOf('mp4') >= 0 ? 'mp4' : 'webm', blob = new Blob(chunks, { type: mime.split(';')[0] });
       var a = document.createElement('a'), name = '地震_' + QC.formatDate(st.t0) + '_' + QC.formatDate(st.t1 - 1) + '.' + ext;
@@ -791,7 +954,7 @@
     (function next() {
       if (aborted || frame >= total) { rec.stop(); setT(st.t0 + Math.min(frame, total - 1) * S.step); return; }
       setT(st.t0 + frame * S.step);
-      drawFrame(ctx, snap.canvas, W, H, scale, chartH, mtBase);
+      drawFrame(ctx, snap.canvas, W, H, scale, chartH, mtBase, xsH);
       track.requestFrame();
       frame++;
       if (frame % 10 === 0) note.textContent = '書き出し中… ' + frame + ' / ' + total + ' コマ（このタブを前面に出したままにしてください）';
@@ -810,6 +973,12 @@
     bindTime();
     bindCharts();
     renderLegend();
+    $('xsec').style.display = S.showXsec ? '' : 'none';
+    $('mtChart').style.display = $('cntChart').style.display = S.showMt ? '' : 'none';
+    var hid = false;
+    try { hid = localStorage.getItem('quake.sideHidden') === '1'; } catch (e) { /* 読めなくても動く */ }
+    setSideHidden(hid);
+    $('sideTab').onclick = function () { setSideHidden(!document.body.classList.contains('sideHidden')); };
     $('recBtn').onclick = startRecording;
     $('recStop').onclick = function () { if (st.rec) st.rec.stop(); };
     window.addEventListener('resize', function () { renderChartBases(); drawAll(); });

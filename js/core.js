@@ -280,6 +280,32 @@
     return [256 * (0.5 + lon / 360), 256 * (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI))];
   }
 
+  // ---------------------------------------------------------------- 地図の回転と断面図
+  // 地図（Leaflet）は回転しない枠の中で描き、その枠ごと画面の中心で deg 度（時計回り）回す。
+  // 地震の印は回転しない画面に、回した後の位置で描く。
+  /** Leaflet の枠の座標 (cx, cy)（枠の大きさ cw×ch）→ 画面（vw×vh）の座標 */
+  function rotScreen(cx, cy, cw, ch, vw, vh, deg) {
+    var a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), x = cx - cw / 2, y = cy - ch / 2;
+    return [vw / 2 + x * c - y * s, vh / 2 + x * s + y * c];
+  }
+  /** 画面上で (dx, dy) 動かしたときの、Leaflet の枠の中での動き（逆回転） */
+  function rotDelta(dx, dy, deg) {
+    var a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+    return [dx * c + dy * s, -dx * s + dy * c];
+  }
+  /** 画面の右（＋X）が指す方位（北 0°・東 90°、時計回り） */
+  function screenXAzimuth(deg) { return (((90 - deg) % 360) + 360) % 360; }
+  var DIRS = ['北', '北北東', '北東', '東北東', '東', '東南東', '南東', '南南東', '南', '南南西', '南西', '西南西', '西', '西北西', '北西', '北北西'];
+  function dirName(az) { return DIRS[Math.round((((az % 360) + 360) % 360) / 22.5) % 16]; }
+  /** 断面図の深さの目盛り（km） */
+  function depthTicks(maxKm) {
+    var steps = [5, 10, 20, 50, 100, 200, 500], st = steps[steps.length - 1];
+    for (var i = 0; i < steps.length; i++) if (maxKm / steps[i] <= 6) { st = steps[i]; break; }
+    var out = [];
+    for (var d = 0; d <= maxKm + 1e-9; d += st) out.push(d);
+    return out;
+  }
+
   // ---------------------------------------------------------------- グラフ
   /** 期間を日本時間の日ごとに数える */
   function dailyCounts(ev, idx, t0, t1) {
@@ -328,7 +354,8 @@
     filterEvents: filterEvents, radius: radius, lifeMs: lifeMs, MAG_COLORS: MAG_COLORS,
     DEP_COLORS: DEP_COLORS, DEP_UNKNOWN: DEP_UNKNOWN, INT_STYLES: INT_STYLES, INT_UNKNOWN: INT_UNKNOWN,
     intensityStyle: intensityStyle, colorOf: colorOf, styleOf: styleOf, ageColor: ageColor, alphas: alphas,
-    visibleAt: visibleAt, depthLook: depthLook, project0: project0, estIntensity: estIntensity, INT_THRESHOLDS: INT_THRESHOLDS,
+    visibleAt: visibleAt, depthLook: depthLook, rotScreen: rotScreen, rotDelta: rotDelta,
+    screenXAzimuth: screenXAzimuth, dirName: dirName, depthTicks: depthTicks, project0: project0, estIntensity: estIntensity, INT_THRESHOLDS: INT_THRESHOLDS,
     RING_LEVELS: RING_LEVELS, ringRadiiKm: ringRadiiKm, sphereRadiusKm: sphereRadiusKm, geomSphereRadiusKm: geomSphereRadiusKm, surfaceRadiusKm: surfaceRadiusKm, pxPerKm: pxPerKm, dailyCounts: dailyCounts, timeTicks: timeTicks
   };
   if (typeof module === 'object' && module.exports) module.exports = QC;

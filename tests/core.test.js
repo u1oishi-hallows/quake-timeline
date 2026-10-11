@@ -245,6 +245,29 @@ t('奥行き：深いほど小さく・にじみ・薄く。効き0と深さ不�
   assert.strictEqual(QC.depthLook(300, 3, Object.assign({}, D, { dBlur: 0 })).blur, 0);
   assert.strictEqual(QC.depthLook(300, 3, Object.assign({}, D, { dHaze: 0 })).alpha, 1);
 });
+t('地図の回転：画面の位置・ドラッグの向き・画面の横方向の方位', function () {
+  var near = function (a, b) { return Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9; };
+  // 回さなければ、枠の中心と画面の中心をそろえるだけ
+  assert.ok(near(QC.rotScreen(150, 100, 300, 200, 300, 200, 0), [150, 100]));
+  assert.ok(near(QC.rotScreen(250, 100, 400, 400, 300, 200, 0), [200, 0]));
+  // 時計回りに 90 度：枠の中心より右（東）にあった点は、画面の中心より下に来る
+  assert.ok(near(QC.rotScreen(250, 200, 400, 400, 300, 200, 90), [150, 150]));
+  assert.ok(near(QC.rotScreen(200, 150, 400, 400, 300, 200, 90), [200, 100]));   // 北にあった点は右へ
+  // ドラッグ：画面で動かした量を逆に回すと、回した後にちょうど画面の動きに戻る
+  [0, 30, 90, -135].forEach(function (d) {
+    var u = QC.rotDelta(7, -3, d), back = QC.rotScreen(200 + u[0], 200 + u[1], 400, 400, 0, 0, d);
+    assert.ok(near(back, [7, -3]));
+  });
+  assert.strictEqual(QC.screenXAzimuth(0), 90);
+  assert.strictEqual(QC.screenXAzimuth(90), 0);       // 時計回りに 90 度回すと、右は北
+  assert.strictEqual(QC.screenXAzimuth(-45), 135);
+  assert.strictEqual(QC.dirName(90), '東');
+  assert.strictEqual(QC.dirName(0), '北');
+  assert.strictEqual(QC.dirName(359), '北');
+  assert.strictEqual(QC.dirName(135), '南東');
+  assert.deepStrictEqual(QC.depthTicks(700), [0, 200, 400, 600]);
+  assert.deepStrictEqual(QC.depthTicks(60), [0, 10, 20, 30, 40, 50, 60]);
+});
 t('地図の座標（Web メルカトル）', function () {
   var p = QC.project0(0, 0);
   assert.deepStrictEqual(p, [128, 128]);

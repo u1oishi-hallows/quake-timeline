@@ -29,8 +29,18 @@ header { grid-column: 1 / 3; display: flex; gap: 12px; align-items: baseline; pa
 header h1 { font-size: 16px; margin: 0; }
 #status { color: var(--sub); font-size: 12px; }
 #status.err { color: var(--warn); }
-#mapwrap { position: relative; min-height: 300px; }
+#mapwrap { position: relative; min-height: 300px; overflow: hidden; background: #cfe3f2; }
+#rot { position: absolute; left: 50%; top: 50%; transform-origin: 50% 50%; }
 #map { position: absolute; inset: 0; background: #cfe3f2; }
+#mapCtl { position: absolute; right: 10px; top: 10px; z-index: 600; display: flex; flex-direction: column; gap: 4px; }
+#mapCtl button { width: 34px; height: 34px; padding: 0; font-size: 18px; line-height: 1; background: #fff; color: #1d2433; border: 1px solid #b9c0cc; border-radius: 4px; }
+#north svg { display: block; margin: auto; }
+#attrib { position: absolute; right: 0; bottom: 0; z-index: 600; background: rgba(255,255,255,.8); color: #1d2433; font-size: 11px; padding: 1px 6px; }
+#attrib a { color: #0b57d0; }
+#sideTab { position: absolute; right: 0; top: 50%; transform: translateY(-50%); z-index: 650; writing-mode: vertical-rl; padding: 10px 3px;
+  border-radius: 6px 0 0 6px; border: 1px solid var(--line); border-right: 0; background: var(--panel); color: var(--ink); font-size: 12px; }
+body.sideHidden #app { grid-template-columns: 1fr 0; }
+body.sideHidden #side { display: none; }
 #quakeCanvas { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 450; }
 .ov { position: absolute; z-index: 500; pointer-events: none; }
 #clock { left: 12px; top: 10px; font-size: 26px; font-weight: 700; color: #1d2433;
@@ -47,7 +57,7 @@ header h1 { font-size: 16px; margin: 0; }
   padding: 8px 12px 24px; }
 #charts { grid-column: 1; background: var(--chart-bg); border-top: 1px solid var(--line); }
 #charts canvas { display: block; width: 100%; cursor: pointer; touch-action: none; }
-#mtChart { height: 110px; } #cntChart { height: 70px; }
+#mtChart { height: 110px; } #cntChart { height: 70px; } #xsec { height: 170px; cursor: default; }
 fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 10px; padding: 6px 8px 8px; }
 legend.fs { font-weight: 700; font-size: 13px; padding: 0 4px; }
 details.sub { border: 1px solid var(--line); border-radius: 5px; padding: 4px 8px; margin: 6px 0 8px; }
@@ -90,14 +100,21 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     <span id="status">読み込み中…</span>
   </header>
   <div id="mapwrap">
-    <div id="map"></div>
+    <div id="rot"><div id="map"></div></div>
     <canvas id="quakeCanvas"></canvas>
+    <div id="mapCtl">
+      <button id="zIn" title="拡大">＋</button><button id="zOut" title="縮小">−</button>
+      <button id="north" title="北を上にする"><svg id="northSvg" width="22" height="22" viewBox="-11 -11 22 22" aria-hidden="true"><path d="M0,-9 L5,6 L0,3 L-5,6 Z" fill="#c62828"/><text x="0" y="10" font-size="7" text-anchor="middle" fill="#1d2433">北</text></svg></button>
+    </div>
+    <div id="attrib"><a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>｜震源：気象庁</div>
+    <button id="sideTab" title="操作盤を出し入れする">操作盤 ▶</button>
     <div id="clock" class="ov"></div>
     <div id="clockNote" class="ov"></div>
     <div id="legend" class="ov"></div>
     <div id="tip"></div>
   </div>
   <div id="charts">
+    <canvas id="xsec" height="170"></canvas>
     <canvas id="mtChart" height="110"></canvas>
     <canvas id="cntChart" height="70"></canvas>
   </div>
@@ -124,6 +141,16 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
       <label>まで <input type="date" id="t1"></label>
       <div class="note" id="periodNote"></div>
       <div class="note">ドラッグ中もつまみの時刻で描きます。グラフを押すとその時刻へ移ります。</div>
+    </fieldset>
+    <fieldset>
+      <legend class="fs">地図の向きと下段のグラフ</legend>
+      <label>地図の向き（時計回り、度） <span><input type="range" id="bearing" min="-180" max="180" step="1" style="width:110px"> <b id="bearingV"></b></span></label>
+      <label class="chk"><input type="checkbox" id="showXsec"> 断面図（横＝地図の横方向、縦＝深さ）</label>
+      <label>断面図の縦の範囲
+        <select id="xsDepth"><option value="equal">縦横同じ縮尺</option><option value="30">0〜30km</option><option value="60">0〜60km</option><option value="100">0〜100km</option><option value="200">0〜200km</option><option value="400">0〜400km</option><option value="700">0〜700km</option></select></label>
+      <label class="chk"><input type="checkbox" id="showMt"> M-T図と1日あたりの回数</label>
+      <label class="chk"><input type="checkbox" id="chartView"> グラフは地図に見えている範囲の地震だけで描く</label>
+      <div class="note">地図を回すと、断面図の横軸も回した後の横方向になります（両端に方位を出します）。回している間、ドラッグとホイールでの拡大は地図の中心を基準に動きます。</div>
     </fieldset>
     <fieldset>
       <legend class="fs">描く地震</legend>
@@ -189,8 +216,9 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     </fieldset>
     <fieldset>
       <legend class="fs">動画に書き出す</legend>
-      <div class="note">いま地図に見えている範囲で、期間の最初から最後までを1コマずつ描いて保存します。書き出し中は地図を動かせません。</div>
+      <div class="note">いま地図に見えている範囲（回していれば回したまま）だけを、期間の最初から最後まで1コマずつ描いて保存します。「グラフは地図に見えている範囲の地震だけ」にしていれば、動画の断面図と M-T 図もその範囲の地震だけになります。書き出し中は地図を動かせません。</div>
       <label>大きさ <select id="vidScale"><option value="1">画面と同じ</option><option value="2">2倍（高精細）</option></select></label>
+      <label class="chk"><input type="checkbox" id="vidXsec" checked> 下に断面図を入れる</label>
       <label class="chk"><input type="checkbox" id="vidChart" checked> 下に M-T 図を入れる</label>
       <div style="display:flex;gap:6px;margin-top:6px"><button id="recBtn">● 書き出す</button><button id="recStop" disabled>中止</button></div>
       <div class="note" id="recNote"></div>
