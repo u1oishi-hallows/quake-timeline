@@ -4,5 +4,39 @@
   "_refetch_days": "毎回取り直す速報の日数（後から書き換わっていないかを確かめる）",
   "request_interval_sec": 1.0,
   "_request_interval_sec": "気象庁へ続けて問い合わせるときの間隔（秒）",
-  "user_agent": "quake-timeline (personal research; GitHub Actions)"
+  "user_agent": "quake-timeline (personal research; GitHub Actions)",
+  "schedule": {
+    "_説明": "いつ取得するか。時刻は日本時間。GitHub Actions が1時間ごとに地震情報の一覧だけを見て、ここの決まりで取得するかを決める。手で動かせばいつでも取得する",
+    "weekly": {
+      "weekday": 5,
+      "hour": 11
+    },
+    "_weekly": "ふだんは週1回。weekday は 月0 火1 水2 木3 金4 土5 日6",
+    "rules": [
+      {
+        "min_intensity": "6-",
+        "phases": [
+          {
+            "every_hours": 6,
+            "days": 7
+          },
+          {
+            "every_hours": 24,
+            "days": 14
+          }
+        ]
+      },
+      {
+        "min_intensity": "5-",
+        "phases": [
+          {
+            "every_hours": 24,
+            "days": 14
+          }
+        ]
+      }
+    ],
+    "_rules": "その震度以上を観測した地震の発生から、phases の順に「every_hours 時間ごと」を「days 日間」。強い決まりを先に書く。震度は 5- 5+ 6- 6+ 7",
+    "slack_minutes": 20
+  }
 }

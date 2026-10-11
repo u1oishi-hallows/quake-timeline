@@ -1,10 +1,16 @@
 name: 気象庁から取得
 
+# いつ取得するかは scripts/schedule.py と config.json の schedule が決める。
+#   ふだん：週1回（土曜11時・日本時間）
+#   震度5弱以上を観測：発生から14日間、1日1回
+#   震度6弱以上を観測：発生から7日間は6時間ごと、その後14日間は1日1回
+#   観測した直後はすぐ1回
+# 1時間ごとに起きて、地震情報の一覧（1回の問い合わせ）だけを見て決める。取得しないときは何も保存しない。
+# 手で動かす（Actions の画面の Run workflow）と、いつでも取得する。
+
 on:
   schedule:
-    # 3時間ごと（UTC）。直近の地震情報と、直近 refetch_days 日の速報を取り直す
-    # 2026-10-11 に :17 で作ったが 2 回とも動かなかったため、書き換えて登録し直す（分も :23 にずらす）
-    - cron: '23 */3 * * *'
+    - cron: '23 * * * *'
   workflow_dispatch:
     inputs:
       command:
@@ -28,22 +34,30 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: 取得するか決める
+        id: decide
+        run: python3 scripts/schedule.py decide
       - uses: actions/setup-node@v4
+        if: steps.decide.outputs.run == 'true'
         with:
           node-version: '22'
       - name: 検査
+        if: steps.decide.outputs.run == 'true'
         run: |
-          python3 -m unittest tests.test_jma
+          python3 -m unittest tests.test_jma tests.test_schedule
           TZ=America/New_York node tests/core.test.js
       - name: 取得
         id: fetch
+        if: steps.decide.outputs.run == 'true'
         env:
           CMD: ${{ github.event.inputs.command || 'update' }}
         run: |
           set +e
           python3 scripts/fetch.py $CMD
           echo "code=$?" >> "$GITHUB_OUTPUT"
+          python3 scripts/schedule.py done
       - name: 保存
+        if: steps.decide.outputs.run == 'true'
         run: |
           git config user.name 'quake-fetch-bot'
           git config user.email 'quake-fetch-bot@users.noreply.github.com'
@@ -52,7 +66,7 @@ jobs:
           git commit -q -m "data: $(date -u +%Y-%m-%dT%H:%MZ) ${{ github.event.inputs.command || 'update' }}"
           git push
       - name: 取得の失敗を知らせる
-        if: steps.fetch.outputs.code != '0'
+        if: steps.decide.outputs.run == 'true' && steps.fetch.outputs.code != '0'
         run: |
           echo '一部の取得に失敗しました。data/manifest.json の errors を見てください。'
           exit 1

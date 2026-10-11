@@ -36,6 +36,14 @@ MUTANTS = [
     ('scripts/store.py', "        if cur > rank:\n            return False", "        if False:\n            return False", '確かな出どころを上書きする'),
     ('scripts/store.py', "            self.manifest['revisions'].append({", "            ({", '書き換わりを記録しない'),
     ('scripts/store.py', "            if x[0][:10] != day:", "            if False:", '別の日の行を保存する'),
+    # ---- いつ取得するか（scripts/schedule.py）
+    ('scripts/schedule.py', "due = now - last_full >= dt.timedelta(hours=p['every_hours']) - slack", "due = now - last_full >= dt.timedelta(hours=p['every_hours']) + slack", '取得の間隔の余裕が逆'),
+    ('scripts/schedule.py', "        if last_full < p['event'] <= now:", "        if False:", '検知した直後に取らない'),
+    ('scripts/schedule.py', "t -= dt.timedelta(days=(t.weekday() - weekly['weekday']) % 7)", "t -= dt.timedelta(days=(t.weekday() - weekly['weekday']) % 6)", '週1回の曜日'),
+    ('scripts/schedule.py', "            start = end", "            pass", '6弱の後の1日1回を発生から数える'),
+    ('scripts/schedule.py', "if RANK.get(maxi, 0) >= RANK[r['min_intensity']]", "if RANK.get(maxi, 0) > RANK[r['min_intensity']]", '震度の境目（5弱ちょうど）'),
+    ('scripts/schedule.py', "p = min(active, key=lambda x: x['every_hours'])", "p = max(active, key=lambda x: x['every_hours'])", '強い揺れの間隔を優先しない'),
+    ('scripts/schedule.py', "        return True, '手で動かした'", "        pass", '手で動かしても取らない'),
     # ---- 画面の計算（js/core.js）
     ('js/core.js', "return Date.UTC(+m[1], mo - 1, d, h, mi, 0) + Math.round(sec * 1000) - JST;", "return Date.UTC(+m[1], mo - 1, d, h, mi, 0) + Math.round(sec * 1000);", '読み取りで日本時間の差を引かない'),
     ('js/core.js', "var d = new Date(ms + JST);", "var d = new Date(ms);", '表示で日本時間の差を足さない'),
@@ -98,7 +106,7 @@ def run_tests(root, path='x.py'):
         env = dict(os.environ, TZ='America/New_York')
         p = subprocess.run(['node', 'tests/core.test.js'], cwd=root, capture_output=True, text=True, env=env)
     else:
-        p = subprocess.run([sys.executable, '-m', 'unittest', 'tests.test_jma'], cwd=root,
+        p = subprocess.run([sys.executable, '-m', 'unittest', 'tests.test_jma', 'tests.test_schedule'], cwd=root,
                            capture_output=True, text=True)
     return p.returncode == 0
 
