@@ -141,11 +141,11 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     </div>
     <div id="v3d"><div id="v3dCanvasBox"></div>
       <div id="v3dBar">
-        <button id="v3dClose">◀ 平面の地図に戻る</button><button id="v3dRedo">範囲を選び直す</button><button id="v3dTilt">斜めから</button><button id="v3dTop">真上から</button>
+        <button id="v3dClose">◀ 平面の地図に戻る</button><button id="v3dRedo">範囲を選び直す</button><button id="v3dTilt">斜めから</button><button id="v3dTop">真上から</button><button id="v3dL" title="反時計回りに30度">↺</button><button id="v3dR" title="時計回りに30度">↻</button><button id="v3dSpin">⟳ 回し続ける</button>
         <label>深さの強調 <select id="v3dExag"><option value="auto">自動</option><option value="1">×1（実際の比率）</option><option value="2">×2</option><option value="3">×3</option><option value="5">×5</option><option value="10">×10</option></select></label>
         <label><input type="checkbox" id="v3dShadow" checked>地表の影</label><label><input type="checkbox" id="v3dDrop" checked>震央からの線（M4以上）</label>
         <div id="v3dMsg"></div>
-        <div class="hint">ドラッグ：移動　右ドラッグ・Ctrl＋ドラッグ（2本指）：回転と傾き　ホイール（ピンチ）：拡大。地面は平ら（地形・海の深さは描かない）。試作</div>
+        <div class="hint">ドラッグ：移動　Shift（⌘・Ctrl・Option）＋ドラッグまたは右ドラッグ：左右で縦の軸まわりに回す・上下で傾ける　2本指：回す・傾ける　ホイール（ピンチ）：拡大　Shift＋矢印キー：回す・傾ける。地面は平ら（地形・海の深さは描かない）。試作</div>
       </div>
     </div>
     <div id="tip"></div>

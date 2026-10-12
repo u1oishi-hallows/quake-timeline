@@ -132,6 +132,7 @@
   }
   function closeView(keepUi) {
     if (!V.open && !st.v3d) return;
+    if (V.spin) spin(false);
     V.open = false; st.v3d = false;
     document.body.classList.remove('v3d');
     $('v3d').style.display = 'none';
@@ -150,6 +151,7 @@
       initialViewState: { longitude: 137, latitude: 37, zoom: 4, pitch: 0, bearing: 0, maxPitch: 85 },
       controller: { dragRotate: true, touchRotate: true, keyboard: true, inertia: 200 },
       getTooltip: tooltip,
+      onViewStateChange: function (e) { V.vs = e.viewState; },
       layers: []
     });
   }
@@ -362,6 +364,25 @@
     return { text: txt, style: { fontSize: '12px', background: 'rgba(29,36,51,.9)', color: '#fff', padding: '4px 8px', borderRadius: '4px', maxWidth: '360px' } };
   }
 
+  /** 縦の軸（画面の中心の真下）のまわりに回す。deg は時計回り */
+  function turn(deg, ms) {
+    var v = V.deck.getViewports()[0];        // 今の見え方（ドラッグ・ボタンのどちらで変えた後でも）
+    V.vs = { longitude: v.longitude, latitude: v.latitude, zoom: v.zoom, pitch: v.pitch, bearing: (v.bearing || 0) - deg, maxPitch: 85,
+             transitionDuration: ms == null ? 300 : ms };
+    V.deck.setProps({ initialViewState: V.vs });
+  }
+  /** 回し続ける（ろくろのように）。もう一度押すか、地図に触れると止まる */
+  function spin(on) {
+    V.spin = on; $('v3dSpin').textContent = on ? '■ 止める' : '⟳ 回し続ける';
+    if (!on) return;
+    var last = performance.now();
+    (function step(now) {
+      if (!V.spin || !V.open) return;
+      turn(-(now - last) * 0.012, 0); last = now;       // 1 秒に 12 度（30 秒で 1 周）
+      requestAnimationFrame(step);
+    })(last);
+  }
+
   // ---------------------------------------------------------------- 操作
   function bind() {
     bindPick();
@@ -371,6 +392,10 @@
     $('v3dRedo').onclick = function () { closeView(); startPick(); };
     $('v3dTop').onclick = function () { setCamera(0); };
     $('v3dTilt').onclick = function () { setCamera(55); };
+    $('v3dL').onclick = function () { turn(-30); };
+    $('v3dR').onclick = function () { turn(30); };
+    $('v3dSpin').onclick = function () { spin(!V.spin); };
+    $('v3dCanvasBox').addEventListener('pointerdown', function () { if (V.spin) spin(false); });
     $('v3dExag').onchange = function () { V.exagSel = this.value; update(); };
     $('v3dShadow').onchange = function () { V.shadow = this.checked; update(); };
     $('v3dDrop').onchange = function () { V.drop = this.checked; update(); };
