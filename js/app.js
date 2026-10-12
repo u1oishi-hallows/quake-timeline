@@ -64,7 +64,11 @@
       var el = $(k);
       if (!el) return;
       if (k !== 't0' && k !== 't1') el.value = S[k];
-      if (el.type === 'range') el.addEventListener('input', function () { el.dispatchEvent(new Event('change')); });
+      // つまみ：動かしている間も反映する。ただし重い計算につながるもの（DEFER）は、離して位置が決まってから計算する
+      if (el.type === 'range') el.addEventListener('input', function () {
+        if (DEFER.indexOf(k) >= 0) return previewRange(k, el);
+        el.dispatchEvent(new Event('change'));
+      });
       el.addEventListener('change', function () {
         if (k === 't0' || k === 't1') return onPeriodChange();
         var v = NUM.indexOf(k) >= 0 ? +el.value : el.value;
@@ -80,6 +84,12 @@
       el.addEventListener('change', function () { S[k] = el.checked; settingsChanged(k); });
     });
   }
+  var DEFER = ['aggLevel', 'bearing'];
+  /** 重いつまみを動かしている間：表示だけ変える（マーカーの数は数字だけ、地図の向きは今の塊のまま回す） */
+  function previewRange(k, el) {
+    if (k === 'aggLevel') { $('aggKV').textContent = '段階' + el.value + '（' + QC.kOfLevel(+el.value) + '個）…離すと計算'; return; }
+    if (k === 'bearing') { S.bearing = +el.value; st.live = true; layoutRot(); drawAll(); }
+  }
   var REFILTER = ['magMin', 'intMin', 'depMin', 'depMax', 'lowFreq', 'reference'];
   var RELIFE = ['life1', 'lifeGrowth', 'lifeMax'];
   var RESPHERE = ['sphereInt', 'sphereAmp', 'sphereKind', 'sphereR5', 'sphereGrowth', 'ringFrom', 'ringMinM'];
@@ -88,7 +98,7 @@
     else if (RELIFE.indexOf(k) >= 0) { computeLife(); }
     else if (RESPHERE.indexOf(k) >= 0) { computeSpheres(); }
     if (k === 'shape' || k === 'sphereKind' || k === 'vol') applyShapeClass();
-    if (k === 'bearing') { layoutRot(); scheduleViewIdx(); }
+    if (k === 'bearing') { st.live = false; layoutRot(); scheduleViewIdx(); }
     if (k === 'mode' || k === 'aggCell' || k === 'aggMethod' || k === 'aggLevel') { st.agg = null; cancelEnding(true); applyShapeClass(); }
     if (k === 'mode' && S.mode === 'sum' && st.playing) play(false);
     if (k === 'xsSize') applyXsecSize();
@@ -112,7 +122,10 @@
     var c = $('quakeCanvas'), wrap = $('mapwrap');
     map.on('move zoomend resize viewreset', function () { sizeCanvas(); drawMap(); });
     map.on('moveend zoomend resize', scheduleViewIdx);
-    map.on('moveend zoomend resize', function () { st.viewVer = (st.viewVer || 0) + 1; if (S.mode !== 'time' && S.aggMethod === 'kmeans') drawMap(); });
+    map.on('moveend zoomend resize', function () {
+      if (st.live) return;                                 // 地図の向きのつまみを動かしている間はまとめ直さない（離したときに 1 回）
+      st.viewVer = (st.viewVer || 0) + 1; if (S.mode !== 'time' && S.aggMethod === 'kmeans') drawMap();
+    });
     map.on('zoomstart', function () { c.style.visibility = 'hidden'; });
     map.on('zoomend', function () { c.style.visibility = ''; });
     wrap.addEventListener('mousemove', onHover);
@@ -141,7 +154,7 @@
     $('northSvg').style.transform = 'rotate(' + S.bearing + 'deg)';
     if ($('bearingV')) $('bearingV').textContent = S.bearing + '°';
     if (noMap || !map) return;
-    st.viewVer = (st.viewVer || 0) + 1;
+    if (!st.live) st.viewVer = (st.viewVer || 0) + 1;      // つまみを動かしている間は、見える範囲が変わったことにしない
     map.invalidateSize();                 // 中心は保ったまま大きさだけ変わる
     var r = rotated();                    // 回している間は、拡大の基準を地図の中心にする（マウスの位置は回転を考えないため）
     map.options.scrollWheelZoom = r ? 'center' : true;
