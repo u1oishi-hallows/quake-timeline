@@ -147,11 +147,11 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     </div>
     <div id="v3d"><div id="v3dCanvasBox"></div>
       <div id="v3dBar">
-        <button id="v3dClose">◀ 平面の地図に戻る</button><button id="v3dRedo">範囲を選び直す</button><button id="v3dTilt">斜めから</button><button id="v3dTop">真上から</button><button id="v3dSpin">⟳ 回し続ける</button>
+        <button id="v3dClose">◀ 平面の地図に戻る</button><button id="v3dRedo">範囲を選び直す</button><button id="v3dTop">真上</button><button id="v3dTilt">斜め上</button><button id="v3dSide2">真横</button><button id="v3dBelow">下から</button><button id="v3dSpin">⟳ 回し続ける</button>
         <label>深さの強調 <select id="v3dExag"><option value="auto">自動</option><option value="1">×1（実際の比率）</option><option value="2">×2</option><option value="3">×3</option><option value="5">×5</option><option value="10">×10</option></select></label>
         <label><input type="checkbox" id="v3dTerrain" checked>地形・海底地形</label><label><input type="checkbox" id="v3dShadow" checked>地表の影</label><label><input type="checkbox" id="v3dDrop" checked>震央からの線（M4以上）</label>
         <div id="v3dMsg"></div>
-        <div class="hint">ドラッグ：回す（左右＝縦の軸まわり、上下＝傾き。中心＝画面の中心の真下・箱の深さの真ん中）　Shift＋ドラッグ・右ドラッグ：移動　ホイール（ピンチ）：拡大　2本指：回す・傾ける　H：表示を隠す。地形の高さは震源と同じ倍率で強調（地形：AWS Terrain Tiles＝海底 ETOPO1〈NOAA〉・陸 SRTM／GMTED〈USGS〉）。試作</div>
+        <div class="hint">ドラッグ：回す（左右＝縦の軸まわり、上下＝傾き。真上から地面の下まで。中心＝箱の中心）　Shift＋ドラッグ・右ドラッグ：移動（中心も動く）　ホイール（ピンチ）：拡大　H：表示を隠す。地形の高さは震源と同じ倍率で強調（地形：AWS Terrain Tiles＝海底 ETOPO1〈NOAA〉・陸 SRTM／GMTED〈USGS〉）。試作</div>
       </div>
     </div>
     <div id="tip"></div>
