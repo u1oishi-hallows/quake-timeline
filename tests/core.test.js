@@ -464,9 +464,14 @@ t('想定震源域からの距離：震源から面（升ごとの深さの幅�
   assert.strictEqual(QC.srcFade(Infinity), 0.9);
   assert.strictEqual(QC.desaturate('#ff0000', 0), 'rgb(255,0,0)');
   assert.strictEqual(QC.desaturate('#ff0000', 1), 'rgb(116,116,116)');    // 輝度 76＋40
-  assert.strictEqual(QC.colorOf('src', 3, 10, 0, 0, 4.9), QC.desaturate(QC.colorOf('mag', 3, 0, 0), 0));
-  assert.strictEqual(QC.colorOf('src', 6, 10, 0, 0, 40), QC.desaturate(QC.colorOf('mag', 6, 0, 0), QC.srcFade(40)));
-  assert.notStrictEqual(QC.colorOf('src', 6, 10, 0, 0, 40), QC.colorOf('src', 6, 10, 0, 0, 10));
+  // 色＝いちばん近い海域の色、鮮やかさ＝近さ。近くに海域が無い・色が無いときは灰色。M には左右されない
+  var red = QC.SRC_GROUP_COLORS.japan;
+  assert.strictEqual(QC.colorOf('src', 3, 10, 0, 0, 4.9, red), QC.desaturate(red, 0));
+  assert.strictEqual(QC.colorOf('src', 6, 10, 0, 0, 40, red), QC.desaturate(red, QC.srcFade(40)));
+  assert.strictEqual(QC.colorOf('src', 3, 10, 0, 0, 40, red), QC.colorOf('src', 7, 10, 0, 0, 40, red));
+  assert.notStrictEqual(QC.colorOf('src', 6, 10, 0, 0, 3, red), QC.colorOf('src', 6, 10, 0, 0, 3, QC.SRC_GROUP_COLORS.chishima));
+  assert.strictEqual(QC.colorOf('src', 6, 10, 0, 0, Infinity, red), QC.SRC_FAR);
+  assert.strictEqual(QC.colorOf('src', 6, 10, 0, 0, 3, null), QC.SRC_FAR);
   assert.deepStrictEqual(QC.styleOf('src', 3, NaN, 0, 0, NaN), { fill: '#ffffff', stroke: '#555555', dash: true });
   // 想定震源域ごとの集計：面から 10km 以内（ちょうど 10km を含む）だけ、いちばん近い海域に。エネルギーの大きい順、回数 0 の海域は出さない
   var ev3 = { mag: [5, 6, 4, 7, 3] }, Dd = [2, 10, 10.1, Infinity, 0], Gg = [0, 0, 0, -1, 2];

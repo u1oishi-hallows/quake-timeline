@@ -195,6 +195,9 @@
   // 想定震源域からの距離（km、震源から震源域の面までの立体の距離）：色は M のまま、遠いほど鮮やかさを落とす（灰色に近づける）。
   // 5km 以内は元の色、そこから距離が 2 倍になるごとに 1/4 ずつ落とし、80km 以上（近くに震源域が無いときも）は 9 割落とす
   var SRCD_STEPS = [5, 10, 20, 40, 80], SRCD_UNKNOWN = { fill: '#ffffff', stroke: '#555555', dash: true, label: '深さ不明' };
+  // 海域ごとの色（地図の外形・立体の膜・「想定震源域からの距離」の色で共通）。M の色と紛れにくく、互いに見分けやすい色
+  var SRC_GROUP_COLORS = { chishima: '#2c7bb6', japan: '#d7191c', sagami: '#7b3294', nankai: '#e66101', hyuga: '#b8860b', yonaguni: '#1a9850', japansea: '#8c510a' };
+  var SRC_FAR = '#a9adb5';   // 近くに想定震源域が無い（150km より遠い）
   function srcFade(d) {
     if (!(d > 5)) return 0;
     return 0.9 * Math.min(1, Math.log(d / 5) / Math.log(16));
@@ -205,18 +208,19 @@
     var g = Math.min(255, 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2] + 40 * k);
     return 'rgb(' + c.map(function (v) { return Math.round(v + (g - v) * k); }).join(',') + ')';
   }
-  function colorOf(mode, m, dep, ageFrac, maxi, srcd) {
+  function colorOf(mode, m, dep, ageFrac, maxi, srcd, srcCol) {
     if (mode === 'depth') return isNaN(dep) ? DEP_UNKNOWN : band(DEP_COLORS, dep);
-    if (mode === 'src') return isNaN(srcd) ? SRCD_UNKNOWN.fill : desaturate(band(MAG_COLORS, m), srcFade(srcd));
+    // 想定震源域からの距離：色＝いちばん近い海域の色、鮮やかさ＝近さ（遠いほど灰色に）。近くに無ければ灰色
+    if (mode === 'src') return isNaN(srcd) ? SRCD_UNKNOWN.fill : (srcd === Infinity || !srcCol) ? SRC_FAR : desaturate(srcCol, srcFade(srcd));
     if (mode === 'age') return ageColor(ageFrac);
     if (mode === 'maxi') return intensityStyle(maxi).fill;
     return band(MAG_COLORS, m);
   }
   /** 塗り・輪郭・点線。最大震度のときだけ輪郭の色が塗りと違うことがある */
-  function styleOf(mode, m, dep, ageFrac, maxi, srcd) {
+  function styleOf(mode, m, dep, ageFrac, maxi, srcd, srcCol) {
     if (mode === 'maxi') { var s = intensityStyle(maxi); return { fill: s.fill, stroke: s.stroke, dash: !!s.dash }; }
     if (mode === 'src' && isNaN(srcd)) return { fill: SRCD_UNKNOWN.fill, stroke: SRCD_UNKNOWN.stroke, dash: true };
-    var c = colorOf(mode, m, dep, ageFrac, maxi, srcd);
+    var c = colorOf(mode, m, dep, ageFrac, maxi, srcd, srcCol);
     return { fill: c, stroke: c, dash: false };
   }
   /** 塗りと輪郭の濃さ。大きい円ほど中を薄く、輪郭を残す。古くなるほど薄く。 */
@@ -692,7 +696,7 @@
     DEP_COLORS: DEP_COLORS, DEP_UNKNOWN: DEP_UNKNOWN, INT_STYLES: INT_STYLES, INT_UNKNOWN: INT_UNKNOWN,
     intensityStyle: intensityStyle, colorOf: colorOf, styleOf: styleOf, ageColor: ageColor, alphas: alphas,
     visibleAt: visibleAt, depthLook: depthLook, energyJ: energyJ, magOfEnergy: magOfEnergy, formatEnergy: formatEnergy,
-    SRCD_STEPS: SRCD_STEPS, SRCD_UNKNOWN: SRCD_UNKNOWN, srcFade: srcFade, desaturate: desaturate, srcStats: srcStats, srcAreaKm2: srcAreaKm2, SRC_MAX_KM: SRC_MAX_KM, srcPrepare: srcPrepare, srcDistance: srcDistance, srcLast: srcLast,
+    SRCD_STEPS: SRCD_STEPS, SRC_GROUP_COLORS: SRC_GROUP_COLORS, SRC_FAR: SRC_FAR, SRCD_UNKNOWN: SRCD_UNKNOWN, srcFade: srcFade, desaturate: desaturate, srcStats: srcStats, srcAreaKm2: srcAreaKm2, SRC_MAX_KM: SRC_MAX_KM, srcPrepare: srcPrepare, srcDistance: srcDistance, srcLast: srcLast,
     rng: rng, kmeans: kmeans, kmeansClusters: kmeansClusters, kmFit: kmFit, kmAt: kmAt, kmActiveMedian: kmActiveMedian, kmSolve: kmSolve, kmPoints: kmPoints, kmInitialK: kmInitialK, KM_MAX: KM_MAX, aggregate: aggregate, aggState: aggState, aggAdd: aggAdd, aggFinish: aggFinish, aggRadius: aggRadius, kOfLevel: kOfLevel, idxRange: idxRange, computeStats: computeStats, rotScreen: rotScreen, rotDelta: rotDelta,
     screenXAzimuth: screenXAzimuth, dirName: dirName, depthTicks: depthTicks, project0: project0, estIntensity: estIntensity, INT_THRESHOLDS: INT_THRESHOLDS,
     RING_LEVELS: RING_LEVELS, ringRadiiKm: ringRadiiKm, sphereRadiusKm: sphereRadiusKm, geomSphereRadiusKm: geomSphereRadiusKm, surfaceRadiusKm: surfaceRadiusKm, pxPerKm: pxPerKm, dailyCounts: dailyCounts, timeTicks: timeTicks

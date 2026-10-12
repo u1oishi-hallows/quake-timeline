@@ -366,7 +366,8 @@
     data.groups.forEach(function (g) {
       if (ids.indexOf(g.id) < 0) return;
       g.codes.forEach(function (c) {
-        c.outline.forEach(function (ring) { add(ring, function (q) { return zOf(q[2]); }, [180, 65, 13, c.main ? 230 : 170], c.main ? 2 : 1.3); });
+        var gc = rgb(QC.SRC_GROUP_COLORS[g.id] || '#b4410d');
+        c.outline.forEach(function (ring) { add(ring, function (q) { return zOf(q[2]); }, [gc[0], gc[1], gc[2], c.main ? 230 : 170], c.main ? 2 : 1.3); });
       });
       g.depth.forEach(function (x) {
         x.lines.forEach(function (ln) { add(ln, function () { return zOf(x.km); }, [91, 58, 41, 150], 1); });
@@ -379,7 +380,7 @@
   /** 想定震源域の面（重ねる図で選んだ海域）：半透明の膜（光の当たり方で陰が付く）と、0.2 度ごとの薄い網目。
    *  面は深さの格子（0.05 度）の升の真ん中の深さを結んだもの。長方形が何通りも重なって深さが 1 つに決まらない所（幅 5km 超）と、
    *  隣どうしで深さが 15km 以上違う所（別の断層面）は結ばない。海域・強調・範囲が同じなら作り直さない */
-  var MEMBRANE_COLORS = { nankai: [235, 120, 40], chishima: [70, 130, 200], japan: [200, 70, 70], sagami: [150, 90, 190], hyuga: [220, 160, 30], yonaguni: [40, 160, 140], japansea: [120, 120, 120] };
+
   function membrane3d() {
     var ids = A.srcIds(), r = V.roi, data = st.srcData;
     if (!V.membrane || !ids.length || !data) return [];
@@ -410,7 +411,7 @@
         else if (c.length === 3 && near(c[0], c[1]) && near(c[1], c[2]) && near(c[0], c[2])) tri.push(vert(c[0]), vert(c[1]), vert(c[2]));
       }
       if (!tri.length) return;
-      var col = MEMBRANE_COLORS[g.id] || [235, 120, 40];
+      var col = rgb(QC.SRC_GROUP_COLORS[g.id] || '#e66101');      // 海域の色（地図の外形・距離の色と同じ）
       out.push(new deck.SimpleMeshLayer({ id: 'mem-' + g.id + '-' + key, data: [0], _instanced: false, coordinateSystem: deck.COORDINATE_SYSTEM.CARTESIAN,
         mesh: { attributes: { POSITION: { value: new Float32Array(pos), size: 3 } }, indices: { value: new Uint32Array(tri), size: 1 } },
         getPosition: [0, 0, 0], getColor: col, opacity: 0.25, material: { ambient: 0.45, diffuse: 0.7, shininess: 8, specularColor: [60, 60, 60] }, parameters: BEHIND }));
@@ -465,7 +466,7 @@
     var ids = new Int32Array(n), rip = [], drops = [];
     for (var q = 0; q < n; q++) {
       var k = vis[q], i = d.idx[k], m = ev.mag[i], age = T - ev.t[i], f = age / d.life[k];
-      var sty = QC.styleOf(S.colorMode, m, ev.dep[i], f, ev.maxi[i], A.srcd(i)), a = QC.alphas(m, f, S), cf = rgb(sty.fill), cs = rgb(sty.stroke);
+      var sty = QC.styleOf(S.colorMode, m, ev.dep[i], f, ev.maxi[i], A.srcd(i), A.srcHue(i)), a = QC.alphas(m, f, S), cf = rgb(sty.fill), cs = rgb(sty.stroke);
       var r = QC.radius(m, S) * V.mpp;
       var pp = P(ev.lon[i], ev.lat[i], zOf(ev.dep[i]));
       pos[q * 3] = pp[0]; pos[q * 3 + 1] = pp[1]; pos[q * 3 + 2] = pp[2];
