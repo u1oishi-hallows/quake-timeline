@@ -15,10 +15,11 @@
   'use strict';
   var DECK_SRC = 'vendor/deckgl-9.3.11.min.js';
   var GSI = 'https://cyberjapandata.gsi.go.jp/xyz/';
+  var TERRAIN = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
   var TILES = { pale: GSI + 'pale/{z}/{x}/{y}.png', blank: GSI + 'blank/{z}/{x}/{y}.png', photo: GSI + 'seamlessphoto/{z}/{x}/{y}.jpg' };
   var DAY = 86400000;
   var A, S, st, QC, map;
-  var V = { open: false, roi: null, d: null, km: {}, deck: null, ground: null, mpp: 1, exag: 1, exagSel: 'auto', shadow: true, drop: true, pickRect: null };
+  var V = { open: false, roi: null, d: null, km: {}, deck: null, ground: null, mpp: 1, exag: 1, exagSel: 'auto', terrain: true, shadow: true, drop: true, pickRect: null };
   function $(id) { return document.getElementById(id); }
   function app() { A = window.__app; S = A.S; st = A.st; QC = A.QC; map = A.getMap(); }
 
@@ -148,10 +149,12 @@
     V.deck = new deck.Deck({
       parent: $('v3dCanvasBox'),
       views: new deck.MapView({ repeat: false }),
-      initialViewState: { longitude: 137, latitude: 37, zoom: 4, pitch: 0, bearing: 0, maxPitch: 85 },
-      controller: { dragRotate: true, touchRotate: true, keyboard: true, inertia: 200 },
+      // 見え方は自分で持つ（viewState）。回転の中心を地面より下（箱の深さの真ん中）に置くため、position（中心の高さ）を毎回付け直す
+      viewState: (V.vs = { longitude: 137, latitude: 37, zoom: 4, pitch: 0, bearing: 0, maxPitch: 85, position: [0, 0, 0] }),
+      onViewStateChange: function (e) { setView(e.viewState); },
+      // 左ドラッグ（マウス）は自前で回す（bindRotate）。Shift＋ドラッグ・右ドラッグは移動、2 本指は deck.gl の回転と傾き
+      controller: { dragMode: 'rotate', dragRotate: true, touchRotate: true, keyboard: true, inertia: 200 },
       getTooltip: tooltip,
-      onViewStateChange: function (e) { V.vs = e.viewState; },
       layers: []
     });
   }
@@ -162,14 +165,18 @@
     V.zoom0 = vp.zoom;
     // 大きさの基準：立体にしたときの倍率で、平面の地図の 1px が地面の上で何 m か
     V.mpp = 40075016.686 * Math.cos((r.s + r.n) / 2 * Math.PI / 180) / (512 * Math.pow(2, vp.zoom));
-    V.deck.setProps({ initialViewState: { longitude: vp.longitude, latitude: vp.latitude, zoom: vp.zoom - 0.3, pitch: 50, bearing: -S.bearing, maxPitch: 85,
-                                          transitionDuration: 0 } });
+    setView({ longitude: vp.longitude, latitude: vp.latitude, zoom: vp.zoom - 0.3, pitch: 50, bearing: -S.bearing });
   }
   function setCamera(pitch) {
     var r = V.roi, box = $('v3dCanvasBox');
     var vp = new deck.WebMercatorViewport({ width: box.clientWidth, height: box.clientHeight }).fitBounds([[r.w, r.s], [r.e, r.n]], { padding: 60 });
-    V.deck.setProps({ initialViewState: { longitude: vp.longitude, latitude: vp.latitude, zoom: vp.zoom - (pitch ? 0.3 : 0), pitch: pitch, bearing: -S.bearing, maxPitch: 85,
-                                          transitionDuration: 600 } });
+    setView({ longitude: vp.longitude, latitude: vp.latitude, zoom: vp.zoom - (pitch ? 0.3 : 0), pitch: pitch, bearing: V.vs.bearing });
+  }
+  /** 見え方を決める。画面の中心は「地図の中心の真下、箱の深さの真ん中」（position＝その高さ）。回すとこの点のまわりに回る */
+  function setView(v) {
+    V.vs = { longitude: v.longitude, latitude: v.latitude, zoom: v.zoom, pitch: Math.max(0, Math.min(85, v.pitch)), bearing: v.bearing,
+             maxPitch: 85, position: [0, 0, V.d ? zOf(V.d.maxKm / 2) : 0] };
+    V.deck.setProps({ viewState: V.vs });
   }
 
   // ---------------------------------------------------------------- 範囲の地震（絞り込み・期間・残る時間が変わったら作り直す）
@@ -234,7 +241,8 @@
     if (!V.open || !V.deck || !st.f) return;
     var d = roiData(), sum = A.sumView(), T = st.T;
     V.exag = V.exagSel === 'auto' ? autoExag(V.roi, d.maxKm) : +V.exagSel;    // 深さの強調は位置を写すときだけに効く（k-means は計算し直さない）
-    var layers = [groundLayer(), frameLayer(d)].concat(frameLabels(d));
+    if (V.vs && V.vs.position[2] !== zOf(d.maxKm / 2)) setView(V.vs);          // 回転の中心の深さも合わせる
+    var layers = [groundLayer(), frameLayer(d)].concat(frameLabels(d), srcLayers3d());
     var msg = d.idx.length.toLocaleString() + ' 回' + (d.noDep ? '（深さ不明 ' + d.noDep.toLocaleString() + ' 回は立体の位置が決まらないので描かない）' : '');
     if (sum || S.mode === 'timeAgg') {
       var km = kmFor(sum ? 3 : 4);
@@ -247,6 +255,7 @@
   }
   /** 地面：地理院タイルを半透明に、選んだ範囲で切り取る（タイルの層は同じものを使い回し、回しても読み直さない） */
   function groundLayer() {
+    if (V.terrain) return terrainLayer();
     var r = V.roi, key = [S.base, r.s, r.n, r.w, r.e].join('|');
     if (V.ground && V.groundKey === key) return V.ground;
     V.groundKey = key;
@@ -259,6 +268,44 @@
           parameters: NO_DEPTH, extensions: [new deck.ClipExtension()], clipBounds: [r.w, r.s, r.e, r.n] });
       }
     }));
+  }
+  /** 地形（海底を含む）：AWS Terrain Tiles（Terrarium 形式の標高 PNG。日本の周りの海底は ETOPO1、陸は SRTM・GMTED）に地理院タイルを貼る。
+   *  高さは震源と同じ倍率で強調する（地形だけ強めると、海底の下で起きた地震が海底より上に見えてしまう）。
+   *  地形どうしは前後を正しく重ね（奥の斜面が手前に透けない）、震源・箱は地形より後に、前後を見ずに重ねる（地面の下も見える） */
+  function terrainLayer() {
+    var r = V.roi, x = V.exag, key = ['T', S.base, r.s, r.n, r.w, r.e, x].join('|');
+    if (V.ground && V.groundKey === key) return V.ground;
+    V.groundKey = key;
+    return (V.ground = new deck.TerrainLayer({
+      id: 'terrain-' + x, elevationData: TERRAIN, texture: TILES[S.base] || TILES.pale, minZoom: 2, maxZoom: 12, tileSize: 256,
+      elevationDecoder: { rScaler: 256 * x, gScaler: 1 * x, bScaler: x / 256, offset: -32768 * x },
+      extent: [r.w, r.s, r.e, r.n], meshMaxError: 20 * x, opacity: 0.6, loadOptions: { worker: false },
+      extensions: [new deck.ClipExtension()], clipBounds: [r.w, r.s, r.e, r.n],
+      onTileError: function () { $('v3dMsg').textContent = '地形のタイルの一部を読めませんでした'; }
+    }));
+  }
+  /** 想定震源域（重ねる図で選んだ海域）：外形と等深線を実際の深さに。選んだ範囲で切り取る。海域・倍率・範囲が同じなら作り直さない */
+  function srcLayers3d() {
+    var ids = A.srcIds(), r = V.roi, data = st.srcData;
+    if (!ids.length || !data) return [];
+    var key = [ids.join(','), V.exag, r.s, r.n, r.w, r.e].join('|');
+    if (V.srcKey === key) return V.srcLay;
+    var paths = [];
+    data.groups.forEach(function (g) {
+      if (ids.indexOf(g.id) < 0) return;
+      g.codes.forEach(function (c) {
+        c.outline.forEach(function (ring) {
+          paths.push({ p: ring.map(function (q) { return [q[0], q[1], zOf(q[2])]; }), c: [180, 65, 13, c.main ? 230 : 170], w: c.main ? 2 : 1.3 });
+        });
+      });
+      g.depth.forEach(function (x) {
+        x.lines.forEach(function (ln) { paths.push({ p: ln.map(function (q) { return [q[0], q[1], zOf(x.km)]; }), c: [91, 58, 41, 150], w: 1 }); });
+      });
+    });
+    V.srcKey = key;
+    return (V.srcLay = [new deck.PathLayer({ id: 'src3d-' + key, data: paths, getPath: function (x) { return x.p; }, getColor: function (x) { return x.c; },
+      getWidth: function (x) { return x.w; }, widthUnits: 'pixels', parameters: NO_DEPTH,
+      extensions: [new deck.ClipExtension()], clipBounds: [r.w, r.s, r.e, r.n] })]);
   }
   /** 範囲の箱：地表と底の四角、4 本の縦の辺、深さの目盛りの四角 */
   function frameLayer(d) {
@@ -284,7 +331,7 @@
     var ids = new Int32Array(n), rip = [], drops = [];
     for (var q = 0; q < n; q++) {
       var k = vis[q], i = d.idx[k], m = ev.mag[i], age = T - ev.t[i], f = age / d.life[k];
-      var sty = QC.styleOf(S.colorMode, m, ev.dep[i], f, ev.maxi[i]), a = QC.alphas(m, f, S), cf = rgb(sty.fill), cs = rgb(sty.stroke);
+      var sty = QC.styleOf(S.colorMode, m, ev.dep[i], f, ev.maxi[i], A.srcd(i)), a = QC.alphas(m, f, S), cf = rgb(sty.fill), cs = rgb(sty.stroke);
       var r = QC.radius(m, S) * V.mpp;
       pos[q * 3] = ev.lon[i]; pos[q * 3 + 1] = ev.lat[i]; pos[q * 3 + 2] = zOf(ev.dep[i]);
       rad[q] = r; lw[q] = m >= 5 ? 1.6 : 1; ids[q] = i;
@@ -355,7 +402,7 @@
     if (info.layer.id === 'quakes') {
       var i = V.ids[info.index];
       if (i == null) return null;
-      txt = QC.formatDateTime(ev.t[i]) + '　M' + ev.mag[i].toFixed(1) + '　深さ' + (Math.round(ev.dep[i] * 10) / 10) + 'km　観測' + QC.MAXI_LABEL[ev.maxi[i]];
+      txt = QC.formatDateTime(ev.t[i]) + '　M' + ev.mag[i].toFixed(1) + '　深さ' + (Math.round(ev.dep[i] * 10) / 10) + 'km　観測' + QC.MAXI_LABEL[ev.maxi[i]] + A.srcTip(i);
     } else if (info.layer.id === 'km' && info.object) {
       var g = info.object, mi = g.maxI;
       txt = '集合：' + g.n.toLocaleString() + '回　エネルギーの合計 M' + g.meq.toFixed(1) + '相当（' + QC.formatEnergy(g.E) + '）　最大 M' + ev.mag[mi].toFixed(1) +
@@ -364,21 +411,45 @@
     return { text: txt, style: { fontSize: '12px', background: 'rgba(29,36,51,.9)', color: '#fff', padding: '4px 8px', borderRadius: '4px', maxWidth: '360px' } };
   }
 
-  /** 縦の軸（画面の中心の真下）のまわりに回す。deg は時計回り */
-  function turn(deg, ms) {
-    var v = V.deck.getViewports()[0];        // 今の見え方（ドラッグ・ボタンのどちらで変えた後でも）
-    V.vs = { longitude: v.longitude, latitude: v.latitude, zoom: v.zoom, pitch: v.pitch, bearing: (v.bearing || 0) - deg, maxPitch: 85,
-             transitionDuration: ms == null ? 300 : ms };
-    V.deck.setProps({ initialViewState: V.vs });
+  /** 回す：dBearing は縦の軸（z）まわり、dPitch は横の軸（x）まわり（傾き、0＝真上から〜85＝ほぼ真横から）。
+   *  中心は画面の中心（地図の中心の真下・箱の深さの真ん中）なので、向きと傾きを変えるだけでその点のまわりに回る */
+  function rotateBy(dBearing, dPitch) {
+    var v = V.vs;
+    setView({ longitude: v.longitude, latitude: v.latitude, zoom: v.zoom, bearing: v.bearing + dBearing, pitch: v.pitch + dPitch });
   }
-  /** 回し続ける（ろくろのように）。もう一度押すか、地図に触れると止まる */
+  /** マウスの左ドラッグで回す（左右＝縦の軸まわり、上下＝傾き）。deck.gl に渡さない（渡すと移動になる） */
+  function bindRotate() {
+    var box = $('v3dCanvasBox'), drag = null;
+    var mine = function (e) { return e.pointerType === 'mouse' && e.button === 0 && !(e.shiftKey || e.ctrlKey || e.metaKey || e.altKey); };
+    box.addEventListener('pointerdown', function (e) {
+      if (V.spin) spin(false);
+      if (!V.deck || !mine(e)) return;
+      drag = { x: e.clientX, y: e.clientY, id: e.pointerId };
+      try { box.setPointerCapture(e.pointerId); } catch (err) { /* 押した指が無い（合成の操作など）：取り込まずに続ける */ }
+      e.stopPropagation(); e.preventDefault();
+    }, true);
+    box.addEventListener('pointermove', function (e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      e.stopPropagation();
+      var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      drag.x = e.clientX; drag.y = e.clientY;
+      rotateBy(dx * 0.35, -dy * 0.3);
+    }, true);
+    var end = function (e) { if (drag && e.pointerId === drag.id) { drag = null; e.stopPropagation(); } };
+    box.addEventListener('pointerup', end, true); box.addEventListener('pointercancel', end, true);
+    // deck.gl はマウスの押し下げでも動き出すので、自前で回すときはそれも止める
+    ['mousedown', 'mousemove', 'mouseup'].forEach(function (t) {
+      box.addEventListener(t, function (e) { if (drag || (t === 'mousedown' && mine({ pointerType: 'mouse', button: e.button, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey }))) e.stopPropagation(); }, true);
+    });
+  }
+  /** 回し続ける（ろくろのように）。もう一度押すか、図に触れると止まる */
   function spin(on) {
     V.spin = on; $('v3dSpin').textContent = on ? '■ 止める' : '⟳ 回し続ける';
     if (!on) return;
     var last = performance.now();
     (function step(now) {
       if (!V.spin || !V.open) return;
-      turn(-(now - last) * 0.012, 0); last = now;       // 1 秒に 12 度（30 秒で 1 周）
+      rotateBy((now - last) * 0.012, 0); last = now;       // 1 秒に 12 度（30 秒で 1 周）
       requestAnimationFrame(step);
     })(last);
   }
@@ -392,10 +463,16 @@
     $('v3dRedo').onclick = function () { closeView(); startPick(); };
     $('v3dTop').onclick = function () { setCamera(0); };
     $('v3dTilt').onclick = function () { setCamera(55); };
-    $('v3dL').onclick = function () { turn(-30); };
-    $('v3dR').onclick = function () { turn(30); };
     $('v3dSpin').onclick = function () { spin(!V.spin); };
-    $('v3dCanvasBox').addEventListener('pointerdown', function () { if (V.spin) spin(false); });
+    $('v3dTerrain').onchange = function () { V.terrain = this.checked; update(); };
+    bindRotate();
+    // 凡例と操作盤を隠す・出す（平面の地図でも使える。時刻は隠さない）
+    var tog = function () { var h = !document.body.classList.contains('uiHidden'); document.body.classList.toggle('uiHidden', h);
+      $('uiTog').textContent = h ? '凡例などを出す' : '凡例などを隠す'; };
+    $('uiTog').onclick = tog;
+    document.addEventListener('keydown', function (e) {
+      if ((e.key === 'h' || e.key === 'H') && !e.metaKey && !e.ctrlKey && !e.altKey && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement && document.activeElement.tagName)) tog();
+    });
     $('v3dExag').onchange = function () { V.exagSel = this.value; update(); };
     $('v3dShadow').onchange = function () { V.shadow = this.checked; update(); };
     $('v3dDrop').onchange = function () { V.drop = this.checked; update(); };

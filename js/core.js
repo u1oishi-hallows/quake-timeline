@@ -192,16 +192,24 @@
     var a = [230, 40, 30], b = [150, 150, 160];
     return 'rgb(' + a.map(function (x, k) { return Math.round(x + (b[k] - x) * f); }).join(',') + ')';
   }
-  function colorOf(mode, m, dep, ageFrac, maxi) {
+  // 想定震源域からの距離（km、震源から震源域の面までの立体の距離）。近いほど暖色
+  var SRCD_COLORS = [
+    { lo: -Infinity, c: '#d7191c', label: '5km以内' }, { lo: 5, c: '#f46d43', label: '5〜10km' }, { lo: 10, c: '#fdae61', label: '10〜20km' },
+    { lo: 20, c: '#a6d96a', label: '20〜40km' }, { lo: 40, c: '#2c7bb6', label: '40〜80km' }, { lo: 80, c: '#7b6fae', label: '80〜' + 150 + 'km' },
+    { lo: 150, c: '#b0b4bc', label: '150km以上' }];
+  var SRCD_UNKNOWN = { fill: '#ffffff', stroke: '#555555', dash: true, label: '深さ不明' };
+  function colorOf(mode, m, dep, ageFrac, maxi, srcd) {
     if (mode === 'depth') return isNaN(dep) ? DEP_UNKNOWN : band(DEP_COLORS, dep);
+    if (mode === 'src') return isNaN(srcd) ? SRCD_UNKNOWN.fill : band(SRCD_COLORS, srcd);
     if (mode === 'age') return ageColor(ageFrac);
     if (mode === 'maxi') return intensityStyle(maxi).fill;
     return band(MAG_COLORS, m);
   }
   /** 塗り・輪郭・点線。最大震度のときだけ輪郭の色が塗りと違うことがある */
-  function styleOf(mode, m, dep, ageFrac, maxi) {
+  function styleOf(mode, m, dep, ageFrac, maxi, srcd) {
     if (mode === 'maxi') { var s = intensityStyle(maxi); return { fill: s.fill, stroke: s.stroke, dash: !!s.dash }; }
-    var c = colorOf(mode, m, dep, ageFrac, maxi);
+    if (mode === 'src' && isNaN(srcd)) return { fill: SRCD_UNKNOWN.fill, stroke: SRCD_UNKNOWN.stroke, dash: true };
+    var c = colorOf(mode, m, dep, ageFrac, maxi, srcd);
     return { fill: c, stroke: c, dash: false };
   }
   /** 塗りと輪郭の濃さ。大きい円ほど中を薄く、輪郭を残す。古くなるほど薄く。 */
@@ -428,6 +436,61 @@
     return out;
   }
 
+  // ---------------------------------------------------------------- 想定震源域からの距離
+  /** 想定震源域の深さの格子（data/overlays/source_areas.json の groups[].grid）を、距離を求めやすい形にする。
+   *  ids を渡すとその海域だけ。升ごとに [経度, 緯度, いちばん浅い, いちばん深い, 海域の番号] を持ち、0.2 度の箱に分けておく */
+  var SRC_BIN = 0.2, SRC_MAX_KM = 150;
+  function srcPrepare(data, ids) {
+    var cells = [], gi = [];
+    data.groups.forEach(function (g, k) {
+      if (ids && ids.length && ids.indexOf(g.id) < 0) return;
+      var gr = g.grid, n = 0, w = 0;
+      for (var q = 0; q < gr.z.length; q++) {
+        var v = gr.z[q];
+        if (v < 0) { n -= v; continue; }
+        var lon = gr.lon0 + (n % gr.nx) * gr.step, lat = gr.lat0 + Math.floor(n / gr.nx) * gr.step;
+        cells.push(lon, lat, v / 10, (v + gr.w[w++]) / 10, k);
+        n++;
+      }
+      gi.push(k);
+    });
+    var C = Float64Array.from(cells), bins = new Map();
+    for (var i = 0; i < C.length / 5; i++) {
+      var key = binKey(Math.floor(C[i * 5] / SRC_BIN), Math.floor(C[i * 5 + 1] / SRC_BIN)), b = bins.get(key);
+      if (!b) bins.set(key, b = []);
+      b.push(i);
+    }
+    return { C: C, bins: bins, groups: gi };
+  }
+  function binKey(bx, by) { return (bx + 2000) * 4000 + (by + 2000); }
+  var _srcG = -1, _srcSide = 0;
+  /** 震源（経度・緯度・深さ km）から、想定震源域の面（各升の深さの幅）までの立体の距離（km）。
+   *  SRC_MAX_KM より遠い（近くに震源域が無い）ときは Infinity、深さ不明は NaN。
+   *  直後に srcLast() で、いちばん近い海域の番号と、震源が面より浅い（-1）・幅の中（0）・深い（1）を返す */
+  function srcDistance(prep, lon, lat, dep) {
+    _srcG = -1; _srcSide = 0;
+    if (isNaN(dep) || dep == null) return NaN;
+    var C = prep.C, bx = Math.floor(lon / SRC_BIN), by = Math.floor(lat / SRC_BIN), best = Infinity, cosl = Math.cos(lat * Math.PI / 180);
+    var binKm = SRC_BIN * 110.574 * Math.min(1, cosl), maxR = Math.ceil(SRC_MAX_KM / binKm) + 1;
+    for (var r = 0; r <= maxR; r++) {
+      if (r >= 2 && (r - 1) * binKm > best) break;                    // これより外の箱には、もっと近い升は無い
+      for (var dx = -r; dx <= r; dx++) {
+        for (var dy = -r; dy <= r; dy++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;   // 輪の上の箱だけ
+          var b = prep.bins.get(binKey(bx + dx, by + dy));
+          if (!b) continue;
+          for (var q = 0; q < b.length; q++) {
+            var i = b[q] * 5, ex = (lon - C[i]) * 111.32 * cosl, ey = (lat - C[i + 1]) * 110.574;
+            var ez = dep < C[i + 2] ? C[i + 2] - dep : dep > C[i + 3] ? dep - C[i + 3] : 0, d = ex * ex + ey * ey + ez * ez;
+            if (d < best * best) { best = Math.sqrt(d); _srcG = C[i + 4]; _srcSide = dep < C[i + 2] ? -1 : dep > C[i + 3] ? 1 : 0; }
+          }
+        }
+      }
+    }
+    return best <= SRC_MAX_KM ? best : Infinity;
+  }
+  function srcLast() { return { group: _srcG, side: _srcSide }; }
+
   // ---------------------------------------------------------------- k-means の一式（画面とは別の計算場所 js/kmworker.js でも同じものを使う）
   /** 中心を求め（多いときは等間隔に間引いた点で）、全部の点を割り当て、再生用の累積を作る。
    *  P は点の座標（dim 次元）、ms は M、ids は地震の番号、ts は発生時刻（時刻順に並んでいること） */
@@ -597,6 +660,7 @@
     DEP_COLORS: DEP_COLORS, DEP_UNKNOWN: DEP_UNKNOWN, INT_STYLES: INT_STYLES, INT_UNKNOWN: INT_UNKNOWN,
     intensityStyle: intensityStyle, colorOf: colorOf, styleOf: styleOf, ageColor: ageColor, alphas: alphas,
     visibleAt: visibleAt, depthLook: depthLook, energyJ: energyJ, magOfEnergy: magOfEnergy, formatEnergy: formatEnergy,
+    SRCD_COLORS: SRCD_COLORS, SRCD_UNKNOWN: SRCD_UNKNOWN, SRC_MAX_KM: SRC_MAX_KM, srcPrepare: srcPrepare, srcDistance: srcDistance, srcLast: srcLast,
     rng: rng, kmeans: kmeans, kmeansClusters: kmeansClusters, kmFit: kmFit, kmAt: kmAt, kmActiveMedian: kmActiveMedian, kmSolve: kmSolve, kmPoints: kmPoints, kmInitialK: kmInitialK, KM_MAX: KM_MAX, aggregate: aggregate, aggState: aggState, aggAdd: aggAdd, aggFinish: aggFinish, aggRadius: aggRadius, kOfLevel: kOfLevel, idxRange: idxRange, computeStats: computeStats, rotScreen: rotScreen, rotDelta: rotDelta,
     screenXAzimuth: screenXAzimuth, dirName: dirName, depthTicks: depthTicks, project0: project0, estIntensity: estIntensity, INT_THRESHOLDS: INT_THRESHOLDS,
     RING_LEVELS: RING_LEVELS, ringRadiiKm: ringRadiiKm, sphereRadiusKm: sphereRadiusKm, geomSphereRadiusKm: geomSphereRadiusKm, surfaceRadiusKm: surfaceRadiusKm, pxPerKm: pxPerKm, dailyCounts: dailyCounts, timeTicks: timeTicks

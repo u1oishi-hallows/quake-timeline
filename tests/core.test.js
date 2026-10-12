@@ -431,6 +431,37 @@ t('k-means の一式（kmFit・kmAt・kmSolve）と、別の計算場所（js/km
   ctx.onmessage({ data: { seq: 10, P: Q, dim: 4 } });                       // 壊れた頼み：落ちずに理由を返す
   assert.ok(sent[1].seq === 10 && sent[1].error);
 });
+t('想定震源域からの距離：震源から面（升ごとの深さの幅）までの立体の距離。遠い・深さ不明・海域の選び方', function () {
+  // 升：(140, 35) 深さ 10km、(140.15, 35) 深さ 20〜25km（長方形が重なって幅がある）。その間の 2 つと 2 段目は空白
+  var data = { groups: [{ id: 'a', grid: { lon0: 140, lat0: 35, step: 0.05, nx: 4, ny: 2, z: [100, -2, 200, -4], w: [0, 50] } },
+                        { id: 'b', grid: { lon0: 130, lat0: 30, step: 0.05, nx: 1, ny: 1, z: [50], w: [0] } }] };
+  var p = QC.srcPrepare(data);
+  assert.strictEqual(p.C.length, 15);
+  assert.strictEqual(QC.srcDistance(p, 140, 35, 10), 0);
+  assert.ok(Math.abs(QC.srcDistance(p, 140, 35, 13) - 3) < 1e-9);
+  assert.deepStrictEqual(QC.srcLast(), { group: 0, side: 1 });          // 面より深い
+  assert.ok(Math.abs(QC.srcDistance(p, 140, 35, 7) - 3) < 1e-9);
+  assert.strictEqual(QC.srcLast().side, -1);                               // 面より浅い
+  assert.strictEqual(QC.srcDistance(p, 140.15, 35, 22), 0);               // 幅の中
+  assert.strictEqual(QC.srcLast().side, 0);
+  assert.ok(Math.abs(QC.srcDistance(p, 140.15, 35, 30) - 5) < 1e-9);
+  // 横に離れた所：北へ 0.1 度＝11.06km
+  assert.ok(Math.abs(QC.srcDistance(p, 140, 35.1, 10) - 0.1 * 110.574) < 1e-6);
+  // 箱（0.2 度）をまたいで遠くの升も見つける：西へ 0.5 度・深さ同じ
+  var dW = 0.5 * 111.32 * Math.cos(35 * Math.PI / 180);
+  assert.ok(Math.abs(QC.srcDistance(p, 139.5, 35, 10) - dW) < 1e-6);
+  assert.strictEqual(QC.srcDistance(p, 150, 45, 10), Infinity);           // 近くに升が無い
+  assert.strictEqual(QC.srcDistance(p, 140, 36.6, 10), Infinity);         // 見つかっても 177km（150km より遠い）
+  assert.ok(isNaN(QC.srcDistance(p, 140, 35, NaN)));                       // 深さ不明
+  assert.strictEqual(QC.srcDistance(p, 130, 30, 5), 0);
+  assert.strictEqual(QC.srcLast().group, 1);
+  assert.strictEqual(QC.srcDistance(QC.srcPrepare(data, ['a']), 130, 30, 5), Infinity);   // 海域 a だけ
+  // 色：近いほど暖色、深さ不明は白の点線
+  assert.strictEqual(QC.colorOf('src', 3, 10, 0, 0, 4.9), QC.SRCD_COLORS[0].c);
+  assert.strictEqual(QC.colorOf('src', 3, 10, 0, 0, 5), QC.SRCD_COLORS[1].c);
+  assert.strictEqual(QC.colorOf('src', 3, 10, 0, 0, Infinity), QC.SRCD_COLORS[6].c);
+  assert.deepStrictEqual(QC.styleOf('src', 3, NaN, 0, 0, NaN), { fill: '#ffffff', stroke: '#555555', dash: true });
+});
 t('時間の幅で切り出す：開始は含まず、終わり（T）は含む', function () {
   var ev = evOf(['2024-01-01T00:00:00.0,35,135,10,2,,P,,', '2024-01-02T00:00:00.0,35,135,10,2,,P,,',
                  '2024-01-03T00:00:00.0,35,135,10,2,,P,,', '2024-01-04T00:00:00.0,35,135,10,2,,P,,']);

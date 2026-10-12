@@ -39,6 +39,8 @@ header h1 { font-size: 16px; margin: 0; }
 #attrib a { color: #0b57d0; }
 #sideTab { position: absolute; right: 0; top: 50%; transform: translateY(-50%); z-index: 650; writing-mode: vertical-rl; padding: 10px 3px;
   border-radius: 6px 0 0 6px; border: 1px solid var(--line); border-right: 0; background: var(--panel); color: var(--ink); font-size: 12px; }
+.srcLbl { font-size: 10px; color: #8a2d06; font-weight: 700; text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff; white-space: nowrap; pointer-events: none; }
+.srcLbl span { display: inline-block; transform: translate(-50%, -50%); }
 .nkLbl { font-size: 10px; color: #5b3a29; text-shadow: 0 0 2px #fff, 0 0 2px #fff; white-space: nowrap; pointer-events: none; }
 #statsCanvas { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; z-index: 2000; display: none; cursor: pointer; }
 body.sideHidden #app { grid-template-columns: 1fr 0; }
@@ -59,6 +61,9 @@ body.sideHidden #side { display: none; }
   background: rgba(255,255,255,.95); border: 1px solid #b9c0cc; border-radius: 6px; padding: 6px 10px; font-size: 13px; color: #1d2433; cursor: default; max-width: calc(100% - 20px); }
 #roiBar button { font-size: 12px; padding: 3px 8px; }
 body.v3d #mapCtl, body.v3d #xsecBox, body.v3d #kmBusy { display: none !important; }
+#uiTog { position: absolute; right: 50px; top: 10px; z-index: 660; height: 26px; padding: 0 8px; font-size: 12px; background: rgba(255,255,255,.92); color: #1d2433; border: 1px solid #b9c0cc; border-radius: 4px; }
+body.v3d #uiTog { right: 10px; }
+body.uiHidden #legend, body.uiHidden #v3dBar { display: none !important; }
 #clock { left: 12px; top: 10px; font-size: 26px; font-weight: 700; color: #1d2433;
   text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 6px #fff; }
 #clockNote { left: 14px; top: 46px; font-size: 12px; color: #1d2433; text-shadow: 0 0 3px #fff, 0 0 3px #fff; }
@@ -135,17 +140,18 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     <div id="clock" class="ov"></div>
     <div id="clockNote" class="ov"></div>
     <div id="legend" class="ov"></div>
+    <button id="uiTog" title="凡例と操作盤を隠す・出す（H キー）">凡例などを隠す</button>
     <div id="kmBusy" class="ov">集合マーカーをまとめ直しています…</div>
     <div id="roiPick"><div id="roiBox"></div>
       <div id="roiBar"><span id="roiMsg"></span><button id="roiAll">今見えている範囲全部</button><button id="roiGo">この範囲を立体で見る</button><button id="roiRedo">選び直す</button><button id="roiCancel">やめる</button></div>
     </div>
     <div id="v3d"><div id="v3dCanvasBox"></div>
       <div id="v3dBar">
-        <button id="v3dClose">◀ 平面の地図に戻る</button><button id="v3dRedo">範囲を選び直す</button><button id="v3dTilt">斜めから</button><button id="v3dTop">真上から</button><button id="v3dL" title="反時計回りに30度">↺</button><button id="v3dR" title="時計回りに30度">↻</button><button id="v3dSpin">⟳ 回し続ける</button>
+        <button id="v3dClose">◀ 平面の地図に戻る</button><button id="v3dRedo">範囲を選び直す</button><button id="v3dTilt">斜めから</button><button id="v3dTop">真上から</button><button id="v3dSpin">⟳ 回し続ける</button>
         <label>深さの強調 <select id="v3dExag"><option value="auto">自動</option><option value="1">×1（実際の比率）</option><option value="2">×2</option><option value="3">×3</option><option value="5">×5</option><option value="10">×10</option></select></label>
-        <label><input type="checkbox" id="v3dShadow" checked>地表の影</label><label><input type="checkbox" id="v3dDrop" checked>震央からの線（M4以上）</label>
+        <label><input type="checkbox" id="v3dTerrain" checked>地形・海底地形</label><label><input type="checkbox" id="v3dShadow" checked>地表の影</label><label><input type="checkbox" id="v3dDrop" checked>震央からの線（M4以上）</label>
         <div id="v3dMsg"></div>
-        <div class="hint">ドラッグ：移動　Shift（⌘・Ctrl・Option）＋ドラッグまたは右ドラッグ：左右で縦の軸まわりに回す・上下で傾ける　2本指：回す・傾ける　ホイール（ピンチ）：拡大　Shift＋矢印キー：回す・傾ける。地面は平ら（地形・海の深さは描かない）。試作</div>
+        <div class="hint">ドラッグ：回す（左右＝縦の軸まわり、上下＝傾き。中心＝画面の中心の真下・箱の深さの真ん中）　Shift＋ドラッグ・右ドラッグ：移動　ホイール（ピンチ）：拡大　2本指：回す・傾ける　H：表示を隠す。地形の高さは震源と同じ倍率で強調（地形：AWS Terrain Tiles＝海底 ETOPO1〈NOAA〉・陸 SRTM／GMTED〈USGS〉）。試作</div>
       </div>
     </div>
     <div id="tip"></div>
@@ -196,8 +202,17 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     </fieldset>
     <fieldset>
       <legend class="fs">重ねる図</legend>
-      <label class="chk"><input type="checkbox" id="showNankai"> 南海トラフ地震の想定震源域</label>
-      <div class="note">地震調査研究推進本部の長期評価のモデル（177通りの震源域のパターン）を加工し、その場所が震源域に含まれる割合（1%・25%・50%・75%以上）と、プレート境界の深さ（10・20・30km）を描きます。プレートの固着を観測で測った分布ではありません。出典：J-SHIS（防災科学技術研究所）を加工。</div>
+      <div>想定震源域（長期評価）</div>
+      <div id="srcBoxes" style="display:grid;grid-template-columns:1fr 1fr;gap:0 8px">
+        <label class="chk"><input type="checkbox" data-src="chishima"> 千島海溝</label>
+        <label class="chk"><input type="checkbox" data-src="japan"> 日本海溝</label>
+        <label class="chk"><input type="checkbox" data-src="sagami"> 相模トラフ</label>
+        <label class="chk"><input type="checkbox" data-src="nankai"> 南海トラフ</label>
+        <label class="chk"><input type="checkbox" data-src="hyuga"> 日向灘</label>
+        <label class="chk"><input type="checkbox" data-src="yonaguni"> 与那国島周辺</label>
+        <label class="chk"><input type="checkbox" data-src="japansea"> 日本海東縁部</label>
+      </div>
+      <div class="note">地震調査研究推進本部の長期評価のモデル（震源域のパターン・断層面）を加工し、主な想定はその場所が震源域に入る割合（1%・25%・50%・75%以上）の濃淡、どの想定も外形の線（点線＝長方形の断層面）、プレート境界（断層面）の深さの等深線（10km ごと）を描きます。立体表示では外形と等深線を実際の深さに描きます。プレートの固着を観測で測った分布ではありません。出典：J-SHIS（防災科学技術研究所）を加工。</div>
     </fieldset>
     <fieldset>
       <legend class="fs">地図の向きと下段のグラフ</legend>
@@ -269,7 +284,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
         <div class="note">形が「円」のときに効きます。深さを「地面の上から見下ろした距離」とみなし、見かけの大きさを 視点の高さ ÷（視点の高さ＋深さ×3Dの効き）にします。深い地震から先に描くので、浅い地震が手前に来ます。震央の位置は動かしません。3D の効きを 0 にすると、深さを表さない元の円になります。深さ不明の地震には効かせません。</div>
       </details>
       <label>色の意味
-        <select id="colorMode"><option value="mag">M（規模）</option><option value="depth">深さ</option><option value="maxi">最大震度</option><option value="age">経過時間</option></select></label>
+        <select id="colorMode"><option value="mag">M（規模）</option><option value="depth">深さ</option><option value="maxi">最大震度</option><option value="age">経過時間</option><option value="src">想定震源域からの距離</option></select></label>
       <label>大きさの尺度
         <select id="sizeScale"><option value="exp">指数（Mが1増えるごとに×倍率）</option><option value="lin">直線</option></select></label>
       <label>M1 の半径（px） <input type="number" id="r1" step="0.25" min="0.25" max="10"></label>
