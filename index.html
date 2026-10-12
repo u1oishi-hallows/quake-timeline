@@ -135,7 +135,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
       <div class="aggOnly">
         <label>まとめ方
           <select id="aggMethod"><option value="kmeans">k-means（震源の空間・時間）</option><option value="grid">格子（地図の上）</option></select></label>
-        <label class="kmOnly">マーカーの数（k、再生では同時に見える数） <span><input type="range" id="aggK" min="3" max="150" step="1" style="width:110px"> <b id="aggKV"></b></span></label>
+        <label class="kmOnly">マーカーの数（再生では同時に見える数） <span><input type="range" id="aggLevel" min="1" max="10" step="1" style="width:100px"> <b id="aggKV"></b></span></label>
         <label class="kmOnly">深さの重み（1＝水平と同じ km） <input type="number" id="kmDepthW" step="0.5" min="0" max="10"></label>
         <label class="kmOnly taggOnly">時間の重み：1日を何 km とみなすか <input type="number" id="kmKmPerDay" step="0.5" min="0" max="200"></label>
         <div class="note kmOnly">静止画（期間の合計）は震源の位置（東西・南北・深さ）の3次元、時間に沿った再生は時間も加えた4次元で、地図に見えている範囲の地震を k 個にまとめます（地図を動かすとまとめ直します）。マーカーは塊の中心にいちばん近い実際の震央に置き、薄い点線の輪は塊の広がりです。再生中は、その時刻までに起きた地震だけで大きさと位置を決めます。ただし塊の分け方は期間全体を見て決めているので、再生は「振り返り」の表示です。深さ不明の地震はまとめに入れません。</div>
@@ -215,7 +215,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
         <summary>集合マーカー（期間の合計）</summary>
         <label>マーカーの数字
           <select id="aggLabel"><option value="meq">M 相当（エネルギーの合計）</option><option value="count">回数</option><option value="energy">エネルギー（J）</option></select></label>
-        <label>M 相当が 1 増えるごとに大きく（px） <input type="number" id="aggStep" step="0.5" min="1" max="20"></label>
+        <label>M 相当が 1 上がるごとに大きく（倍） <input type="number" id="aggRatio" step="0.05" min="1" max="2"></label>
         <div class="note">地震を、地図の上で近いものどうし格子でまとめます（拡大・縮小するとまとめ直します。細かさは「時間」の欄のつまみで）。「時間に沿って（集合マーカー）」では、いまの時刻までの「まとめる時間の幅」の地震だけをまとめます。大きさと色は推定エネルギーの合計を M に置き換えた「M 相当」。エネルギーはグーテンベルク・リヒター(1956)の式 log E = 1.5M + 4.8（J）による推定です。M が 1 増えるとエネルギーは約 32 倍なので、合計はほぼ最大の地震で決まります（回数の多さは数字を「回数」にすると見えます）。</div>
       </details>
       <details id="depthBox" class="sub">

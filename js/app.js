@@ -22,7 +22,7 @@
     ripple: true, rippleMinM: 3, rippleFrames: 12,
     shape: 'circle', sphereKind: 'est', sphereInt: '4', sphereAmp: 1.31, sphereFade: 300, sphereR5: 30, sphereGrowth: 2,
     ringFrom: '3', ringMinM: 3.5,
-    mode: 'time', aggWindow: '7', aggMethod: 'kmeans', aggK: 40, kmDepthW: 1, kmKmPerDay: 3, xsSize: 'M', aggLabel: 'meq', aggCell: 56, aggStep: 5.5, aggMin: 7, aggMax: 48, aggBase: 2,
+    mode: 'time', aggWindow: '7', aggMethod: 'kmeans', aggLevel: 6, kmDepthW: 1, kmKmPerDay: 3, xsSize: 'M', aggLabel: 'meq', aggCell: 56, aggRatio: 1.35, aggMin: 7, aggMax: 64, aggBase: 2,
     endSeq: true, endSumSec: 3, endStatsSec: 7,
     bearing: 0, xsDepth: 'equal', showXsec: true, showMt: true, chartView: true,
     vol: 0.5, viewH: 100, dShrink: true, dBlur: 1, dHaze: 1, hazeMin: 0.25, keepBig: true, keepBigM: 7,
@@ -32,7 +32,7 @@
   };
   var NUM = ['magMin', 'intMin', 'depMin', 'depMax', 'r1', 'sizeGrowth', 'life1', 'lifeGrowth', 'lifeMax',
              'rippleMinM', 'step', 'fps', 'sphereAmp', 'sphereFade', 'sphereR5', 'sphereGrowth', 'ringMinM',
-             'vol', 'viewH', 'dBlur', 'dHaze', 'hazeMin', 'keepBigM', 'bearing', 'aggK', 'kmDepthW', 'kmKmPerDay', 'aggCell', 'aggStep', 'endSumSec', 'endStatsSec'];
+             'vol', 'viewH', 'dBlur', 'dHaze', 'hazeMin', 'keepBigM', 'bearing', 'aggLevel', 'kmDepthW', 'kmKmPerDay', 'aggCell', 'aggRatio', 'endSumSec', 'endStatsSec'];
   var BOOL = ['lowFreq', 'reference', 'ripple', 'dShrink', 'keepBig', 'showXsec', 'showMt', 'chartView', 'endSeq'];
   var STR = ['colorMode', 'sizeScale', 'base', 't0', 't1', 'shape', 'sphereInt', 'sphereKind', 'ringFrom', 'xsDepth', 'mode', 'aggLabel', 'aggWindow', 'xsSize', 'aggMethod'];
 
@@ -89,7 +89,7 @@
     else if (RESPHERE.indexOf(k) >= 0) { computeSpheres(); }
     if (k === 'shape' || k === 'sphereKind' || k === 'vol') applyShapeClass();
     if (k === 'bearing') { layoutRot(); scheduleViewIdx(); }
-    if (k === 'mode' || k === 'aggCell' || k === 'aggMethod' || k === 'aggK') { st.agg = null; cancelEnding(true); applyShapeClass(); }
+    if (k === 'mode' || k === 'aggCell' || k === 'aggMethod' || k === 'aggLevel') { st.agg = null; cancelEnding(true); applyShapeClass(); }
     if (k === 'mode' && S.mode === 'sum' && st.playing) play(false);
     if (k === 'xsSize') applyXsecSize();
     if (k === 'showXsec' || k === 'showMt') applyChartVisibility();
@@ -245,7 +245,7 @@
     document.body.classList.toggle('tagg', S.mode === 'timeAgg');
     document.body.classList.toggle('km', S.aggMethod === 'kmeans');
     document.body.classList.toggle('grid', S.aggMethod !== 'kmeans');
-    if ($('aggKV')) $('aggKV').textContent = S.aggK;
+    if ($('aggKV')) $('aggKV').textContent = '段階' + S.aggLevel + '（' + kNow() + '個）';
     document.body.classList.toggle('circle', S.shape === 'circle');
     if ($('volV')) $('volV').textContent = Math.round(S.vol * 100) + '%';
     document.body.classList.toggle('sphere', S.shape === 'sphere');
@@ -395,11 +395,15 @@
   }
 
   // ---------------------------------------------------------------- k-means（震源の空間 xyz、再生は xyzt）
+  /** マーカーの数（段階から求める。再生では同時に見える数） */
+  function kNow() { return QC.kOfLevel(S.aggLevel); }
   var KM_SAMPLE = 20000;   // 中心を求めるのに使う地震の数の上限（多いときは等間隔に間引く。割り当ては全部）
   /** 地図に見えている範囲の地震を k-means でまとめる（dim 3＝xyz、4＝xyzt）。地図を動かし終えたときと設定を変えたときだけ */
   function kmClusters(dim) {
-    var key = [dim, S.aggK, S.kmDepthW, S.kmKmPerDay, st.fVer, st.viewVer, st.t0].join('|');
-    if (st.km && st.km.key === key) return st.km;
+    // 段階ごとに計算結果を取っておく（同じ表示範囲・期間・重みなら、段階を行き来しても計算し直さない）
+    var base = [dim, S.kmDepthW, S.kmKmPerDay, st.fVer, st.viewVer, st.t0, st.t1].join('|'), key = base + '|' + kNow();
+    if (!st.kmCache || st.kmCache.base !== base) st.kmCache = { base: base, byK: {} };
+    if (st.kmCache.byK[key]) return (st.km = st.kmCache.byK[key]);
     var ev = st.ev, proj = makeProj(1), v = viewSize(), list = [], noDep = 0, idx = st.f.idx;
     for (var q = 0; q < idx.length; q++) {
       var i = idx[q], p = proj(i);
@@ -419,20 +423,21 @@
     }
     // 4 次元（再生）では k を「同時に見えるマーカーの数」にする：塊は時期でも分かれるので、全体の塊の数を増やす。
     // 初めの値は「期間を km にした長さ ÷ 塊 1 つ分の広さの一辺」倍。まとめたあと実際に数えて、足りなければ 1 回だけ増やす
-    var K = S.aggK, v2 = viewSize(), ppk = QC.pxPerKm(map.getCenter().lat, map.getZoom());
+    var K = kNow(), v2 = viewSize(), ppk = QC.pxPerKm(map.getCenter().lat, map.getZoom());
     if (dim === 4) {
-      var cellKm = Math.sqrt((v2.W / ppk) * (v2.H / ppk) / S.aggK), spanKm = (st.t1 - st.t0) / DAY * S.kmKmPerDay;
-      K = Math.min(KM_MAX, Math.max(S.aggK, Math.round(S.aggK * spanKm / cellKm)));
+      var cellKm = Math.sqrt((v2.W / ppk) * (v2.H / ppk) / kNow()), spanKm = (st.t1 - st.t0) / DAY * S.kmKmPerDay;
+      K = Math.min(KM_MAX, Math.max(kNow(), Math.round(kNow() * spanKm / cellKm)));
     }
     var fit = kmFit(P, dim, ms, ids, K), active = dim === 4 ? kmActiveMedian(fit) : fit.length;
-    if (dim === 4 && active < 0.85 * S.aggK && K < KM_MAX) {
-      K = Math.min(KM_MAX, Math.round(K * S.aggK / Math.max(active, 1)));
+    // 多すぎても少なすぎても（目標の ±15% を外れたら）、外れた割合だけ塊の数を変えて 1 回だけまとめ直す
+    if (dim === 4 && (active < 0.85 * kNow() || active > 1.15 * kNow()) && !(active < kNow() && K >= KM_MAX)) {
+      K = Math.min(KM_MAX, Math.max(kNow(), Math.round(K * kNow() / Math.max(active, 1))));
       fit = kmFit(P, dim, ms, ids, K); active = kmActiveMedian(fit);
     }
-    st.km = { key: key, dim: dim, clusters: fit, noDep: noDep, n: n, K: K, active: active };
+    st.km = st.kmCache.byK[key] = { key: key, dim: dim, clusters: fit, noDep: noDep, n: n, K: K, active: active };
     return st.km;
   }
-  var KM_MAX = 400;
+  var KM_MAX = 600;
   /** 中心を求め（多いときは間引いた地震で）、全部の地震を割り当て、再生用の累積を作る */
   function kmFit(P, dim, ms, ids, K) {
     var ev = st.ev, n = ids.length, cap = K > 100 ? 8000 : KM_SAMPLE;
@@ -920,7 +925,7 @@
   }
   function aggNote() {
     if (S.aggMethod === 'kmeans') return '集合マーカー：k-means（震源の' + (sumView() ? '東西・南北・深さの3次元' : '東西・南北・深さ・時間の4次元') +
-      '）で地図に見えている範囲の地震を' + (sumView() ? S.aggK + '個に' : '同時に約' + S.aggK + '個見えるように') + 'まとめ、位置＝中心に近い実際の震央、大きさと色＝推定エネルギーの合計（M相当）、数字＝' +
+      '）で地図に見えている範囲の地震を' + (sumView() ? kNow() + '個に' : '同時に約' + kNow() + '個見えるように') + 'まとめ、位置＝中心に近い実際の震央、大きさと色＝推定エネルギーの合計（M相当）、数字＝' +
       { meq: 'M相当', count: '回数', energy: 'エネルギー' }[S.aggLabel] + '、点線＝塊の広がり';
     return '集合マーカー：' + (sumView() ? '期間内' : windowText()) + 'の地震を格子でまとめ、大きさと色＝推定エネルギーの合計（M相当）、数字＝' +
       { meq: 'M相当', count: '回数', energy: 'エネルギー' }[S.aggLabel] + '。合計はほぼ最大の地震で決まる';

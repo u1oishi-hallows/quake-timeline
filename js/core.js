@@ -433,7 +433,9 @@
     return [k0, lo];
   }
   /** 集合マーカーの半径（px）：M 相当が 1 増えるごとに step px 大きく。小さすぎ・大きすぎは切る */
-  function aggRadius(meq, s) { return Math.max(s.aggMin, Math.min(s.aggMax, s.aggMin + (meq - s.aggBase) * s.aggStep)); }
+  function aggRadius(meq, s) { return Math.max(3, Math.min(s.aggMax, s.aggMin * Math.pow(s.aggRatio, meq - s.aggBase))); }
+  /** マーカーの数の段階（1〜10）→ 同時に見える数：段階1で10個、1段ごとに 10^(1/9) 倍、段階10で100個 */
+  function kOfLevel(L) { L = Math.max(1, Math.min(10, Math.round(L))); return Math.round(10 * Math.pow(10, (L - 1) / 9)); }
 
   /** 期間のまとめ（動画・再生の最後に出す）。idx は描く対象の地震（時刻順）。 */
   function computeStats(ev, idx, t0, t1) {
@@ -509,7 +511,7 @@
     DEP_COLORS: DEP_COLORS, DEP_UNKNOWN: DEP_UNKNOWN, INT_STYLES: INT_STYLES, INT_UNKNOWN: INT_UNKNOWN,
     intensityStyle: intensityStyle, colorOf: colorOf, styleOf: styleOf, ageColor: ageColor, alphas: alphas,
     visibleAt: visibleAt, depthLook: depthLook, energyJ: energyJ, magOfEnergy: magOfEnergy, formatEnergy: formatEnergy,
-    rng: rng, kmeans: kmeans, kmeansClusters: kmeansClusters, aggregate: aggregate, aggState: aggState, aggAdd: aggAdd, aggFinish: aggFinish, aggRadius: aggRadius, idxRange: idxRange, computeStats: computeStats, rotScreen: rotScreen, rotDelta: rotDelta,
+    rng: rng, kmeans: kmeans, kmeansClusters: kmeansClusters, aggregate: aggregate, aggState: aggState, aggAdd: aggAdd, aggFinish: aggFinish, aggRadius: aggRadius, kOfLevel: kOfLevel, idxRange: idxRange, computeStats: computeStats, rotScreen: rotScreen, rotDelta: rotDelta,
     screenXAzimuth: screenXAzimuth, dirName: dirName, depthTicks: depthTicks, project0: project0, estIntensity: estIntensity, INT_THRESHOLDS: INT_THRESHOLDS,
     RING_LEVELS: RING_LEVELS, ringRadiiKm: ringRadiiKm, sphereRadiusKm: sphereRadiusKm, geomSphereRadiusKm: geomSphereRadiusKm, surfaceRadiusKm: surfaceRadiusKm, pxPerKm: pxPerKm, dailyCounts: dailyCounts, timeTicks: timeTicks
   };

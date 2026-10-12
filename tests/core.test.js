@@ -290,10 +290,16 @@ t('集計：格子でまとめ、回数・エネルギー・最大の地震・�
   assert.ok(Math.abs(a.E - (QC.energyJ(3) + QC.energyJ(5))) < 1);
   assert.ok(Math.abs(b.meq - QC.magOfEnergy(2 * QC.energyJ(4))) < 1e-9);
   assert.ok(g[0].E <= g[1].E);                                      // 小さい順（大きいものを最後＝上に描く）
-  var s = { aggMin: 6, aggMax: 40, aggBase: 2, aggStep: 5 };
-  assert.strictEqual(QC.aggRadius(1, s), 6);
-  assert.strictEqual(QC.aggRadius(4, s), 16);
-  assert.strictEqual(QC.aggRadius(12, s), 40);
+  // 大きさ：M 相当が 1 上がるごとに aggRatio 倍（px を足すのではなく掛ける）
+  var s = { aggMin: 6, aggMax: 40, aggBase: 2, aggRatio: 1.5 };
+  assert.strictEqual(QC.aggRadius(2, s), 6);
+  assert.strictEqual(QC.aggRadius(4, s), 13.5);
+  assert.ok(Math.abs(QC.aggRadius(5, s) / QC.aggRadius(4, s) - 1.5) < 1e-12);
+  assert.strictEqual(QC.aggRadius(12, s), 40);                      // 上限
+  assert.strictEqual(QC.aggRadius(-5, s), 3);                       // 下限
+  // マーカーの数の段階：10 段階で 10 → 100、1 段ごとに 10^(1/9) 倍
+  assert.deepStrictEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(QC.kOfLevel), [10, 13, 17, 22, 28, 36, 46, 60, 77, 100]);
+  assert.strictEqual(QC.kOfLevel(0), 10); assert.strictEqual(QC.kOfLevel(11), 100);
 });
 t('k-means（D 次元）：離れた集まりを分け、マーカーは実際の地震の位置。同じ種なら同じ結果。4 次元では時間で分かれる', function () {
   // 2 次元：左（x≈0）に 30 個、右（x≈1000）に 20 個。右側は 2 つの小さな集まり（y=0 と y=40）
