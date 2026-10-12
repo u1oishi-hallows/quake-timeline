@@ -19,7 +19,7 @@
   var TILES = { pale: GSI + 'pale/{z}/{x}/{y}.png', blank: GSI + 'blank/{z}/{x}/{y}.png', photo: GSI + 'seamlessphoto/{z}/{x}/{y}.jpg' };
   var DAY = 86400000;
   var A, S, st, QC, map;
-  var V = { open: false, roi: null, d: null, km: {}, deck: null, ground: null, mpp: 1, exag: 1, exagSel: 'auto', terrain: true, shadow: true, drop: true, pickRect: null };
+  var V = { open: false, roi: null, d: null, km: {}, deck: null, ground: null, mpp: 1, exag: 1, exagSel: 'auto', terrain: true, membrane: true, shadow: true, drop: true, pickRect: null };
   function $(id) { return document.getElementById(id); }
   function app() { A = window.__app; S = A.S; st = A.st; QC = A.QC; map = A.getMap(); }
 
@@ -247,7 +247,11 @@
     else v = (c.match(/\d+/g) || [0, 0, 0]).slice(0, 3).map(Number);
     return (colorCache[c] = v);
   }
-  var NO_DEPTH = { depthWriteEnabled: false, depthCompare: 'always' };   // 半透明の地面の下も透けて見えるよう、描いた順に重ねる
+  var NO_DEPTH = { depthWriteEnabled: false, depthCompare: 'always' };
+  // 震源・集合マーカーは前後を見ずに描く（地面の下も見える）が、奥行きは書き残す。あとから描く震源域の膜は、それより奥の震源にだけ重なる
+  // （膜の向こうの震源は膜の色がかかり、手前の震源はそのまま＝膜が立体に見える）
+  var QUAKE_DEPTH = { depthWriteEnabled: true, depthCompare: 'always' };
+  var BEHIND = { depthWriteEnabled: false, depthCompare: 'less-equal' };   // 半透明の地面の下も透けて見えるよう、描いた順に重ねる
 
   /** 時刻・設定が変わるたびに呼ぶ（app.js の drawAll から）。描く物を作り直すのは時刻に関わるものだけ */
   function update() {
@@ -266,6 +270,7 @@
       else layers = layers.concat(clusterLayers(km, sum ? null : T));
       if (km) msg = (sum ? 'k-means（xyz）' + km.clusters.length + '塊' : 'k-means（xyzt）全体' + km.clusters.length + '塊・同時に約' + km.active) + '　' + msg;
     } else layers = layers.concat(quakeLayers(d, T));
+    layers = layers.concat(membrane3d());
     $('v3dMsg').textContent = msg + (V.groundNote ? '　' + V.groundNote : '');
     V.deck.setProps({ layers: layers });
   }
@@ -290,7 +295,7 @@
     }
     return (V.ground = new deck.SimpleMeshLayer({ id: 'ground-' + key, data: [0], _instanced: false, coordinateSystem: deck.COORDINATE_SYSTEM.CARTESIAN,
       mesh: { attributes: { POSITION: { value: pos, size: 3 }, TEXCOORD_0: { value: g.uv, size: 2 } }, indices: { value: g.idx, size: 1 } },
-      texture: g.tex, getPosition: [0, 0, 0], getColor: [235, 238, 242], opacity: 0.72,
+      texture: g.tex, getPosition: [0, 0, 0], getColor: [235, 238, 242], opacity: 0.72, parameters: { depthWriteEnabled: false, depthCompare: 'always' },
       material: { ambient: 0.6, diffuse: 0.5, shininess: 0, specularColor: [0, 0, 0] } }));
   }
   /** 地面の画像と標高を読む（範囲・地図の種類ごとに 1 回）。読み終えたら描き直す */
@@ -371,6 +376,61 @@
     return (V.srcLay = [new deck.PathLayer({ id: 'src3d-' + key, data: paths, coordinateSystem: deck.COORDINATE_SYSTEM.CARTESIAN,
       getPath: function (x) { return x.p; }, getColor: function (x) { return x.c; }, getWidth: function (x) { return x.w; }, widthUnits: 'pixels', parameters: NO_DEPTH })]);
   }
+  /** 想定震源域の面（重ねる図で選んだ海域）：半透明の膜（光の当たり方で陰が付く）と、0.2 度ごとの薄い網目。
+   *  面は深さの格子（0.05 度）の升の真ん中の深さを結んだもの。長方形が何通りも重なって深さが 1 つに決まらない所（幅 5km 超）と、
+   *  隣どうしで深さが 15km 以上違う所（別の断層面）は結ばない。海域・強調・範囲が同じなら作り直さない */
+  var MEMBRANE_COLORS = { nankai: [235, 120, 40], chishima: [70, 130, 200], japan: [200, 70, 70], sagami: [150, 90, 190], hyuga: [220, 160, 30], yonaguni: [40, 160, 140], japansea: [120, 120, 120] };
+  function membrane3d() {
+    var ids = A.srcIds(), r = V.roi, data = st.srcData;
+    if (!V.membrane || !ids.length || !data) return [];
+    var key = [ids.join(','), V.exag, r.s, r.n, r.w, r.e].join('|');
+    if (V.memKey === key) return V.memLay;
+    var out = [];
+    data.groups.forEach(function (g) {
+      if (ids.indexOf(g.id) < 0) return;
+      var gr = g.grid, nx = gr.nx, ny = gr.ny, Z = new Float32Array(nx * ny).fill(NaN), n = 0, w = 0, q;
+      for (q = 0; q < gr.z.length; q++) {
+        var v = gr.z[q];
+        if (v < 0) { n -= v; continue; }
+        var wd = gr.w[w++];
+        var lon = gr.lon0 + (n % nx) * gr.step, lat = gr.lat0 + Math.floor(n / nx) * gr.step;
+        var inR = lon >= r.w - gr.step && lon <= r.e + gr.step && lat >= r.s - gr.step && lat <= r.n + gr.step;
+        if (wd <= 50 && inR) Z[n] = (v + wd / 2) / 10;          // 升の真ん中の深さ（km）
+        n++;
+      }
+      var vid = new Int32Array(nx * ny).fill(-1), pos = [], tri = [], ok = function (a) { return !isNaN(Z[a]); };
+      var vert = function (a) {
+        if (vid[a] < 0) { vid[a] = pos.length / 3; var p = P(gr.lon0 + (a % nx) * gr.step, gr.lat0 + Math.floor(a / nx) * gr.step, zOf(Z[a])); pos.push(p[0], p[1], p[2]); }
+        return vid[a];
+      };
+      var near = function (a, b) { return Math.abs(Z[a] - Z[b]) < 15; };
+      for (var i = 0; i < ny - 1; i++) for (var j = 0; j < nx - 1; j++) {
+        var a0 = i * nx + j, a1 = a0 + 1, a2 = a0 + nx, a3 = a2 + 1, c = [a0, a1, a3, a2].filter(ok);
+        if (c.length === 4 && near(a0, a1) && near(a0, a2) && near(a3, a1) && near(a3, a2)) tri.push(vert(a0), vert(a2), vert(a1), vert(a1), vert(a2), vert(a3));
+        else if (c.length === 3 && near(c[0], c[1]) && near(c[1], c[2]) && near(c[0], c[2])) tri.push(vert(c[0]), vert(c[1]), vert(c[2]));
+      }
+      if (!tri.length) return;
+      var col = MEMBRANE_COLORS[g.id] || [235, 120, 40];
+      out.push(new deck.SimpleMeshLayer({ id: 'mem-' + g.id + '-' + key, data: [0], _instanced: false, coordinateSystem: deck.COORDINATE_SYSTEM.CARTESIAN,
+        mesh: { attributes: { POSITION: { value: new Float32Array(pos), size: 3 } }, indices: { value: new Uint32Array(tri), size: 1 } },
+        getPosition: [0, 0, 0], getColor: col, opacity: 0.25, material: { ambient: 0.45, diffuse: 0.7, shininess: 8, specularColor: [60, 60, 60] }, parameters: BEHIND }));
+      // 網目：0.2 度（4 升）ごとの緯線・経線に沿って、面のある所だけ
+      var paths = [], line = function (cells) {
+        var cur = [];
+        cells.forEach(function (a, k) {
+          if (ok(a) && (!cur.length || near(a, cells[k - 1]))) cur.push(vid[a] >= 0 || true ? P(gr.lon0 + (a % nx) * gr.step, gr.lat0 + Math.floor(a / nx) * gr.step, zOf(Z[a])) : null);
+          else { if (cur.length > 1) paths.push(cur); cur = ok(a) ? [P(gr.lon0 + (a % nx) * gr.step, gr.lat0 + Math.floor(a / nx) * gr.step, zOf(Z[a]))] : []; }
+        });
+        if (cur.length > 1) paths.push(cur);
+      };
+      for (i = 0; i < ny; i += 4) { var row = []; for (j = 0; j < nx; j++) row.push(i * nx + j); line(row); }
+      for (j = 0; j < nx; j += 4) { var colA = []; for (i = 0; i < ny; i++) colA.push(i * nx + j); line(colA); }
+      out.push(new deck.PathLayer({ id: 'memNet-' + g.id + '-' + key, data: paths, coordinateSystem: deck.COORDINATE_SYSTEM.CARTESIAN,
+        getPath: function (x) { return x; }, getColor: [Math.round(col[0] * 0.6), Math.round(col[1] * 0.6), Math.round(col[2] * 0.6), 120], getWidth: 0.8, widthUnits: 'pixels', parameters: BEHIND }));
+    });
+    V.memKey = key;
+    return (V.memLay = out);
+  }
   /** 範囲の箱：地表と底の四角（辺は緯線・経線に沿う）、4 本の縦の辺、深さの目盛りの四角 */
   function frameLayer(d) {
     var r = V.roi, M = 24, rect = function (z) {
@@ -422,7 +482,7 @@
     if (V.shadow) out.push(shadowLayer('shadow', vis.map(function (k) { return d.idx[k]; })));
     if (drops.length) out.push(dropLayer('drop', drops));
     out.push(new deck.ScatterplotLayer({ id: 'quakes', data: data, coordinateSystem: deck.COORDINATE_SYSTEM.CARTESIAN, billboard: true, stroked: true, filled: true, radiusUnits: 'common',
-      radiusMinPixels: 1.5, lineWidthUnits: 'pixels', pickable: true, autoHighlight: true, highlightColor: [255, 255, 255, 120], parameters: NO_DEPTH }));
+      radiusMinPixels: 1.5, lineWidthUnits: 'pixels', pickable: true, autoHighlight: true, highlightColor: [255, 255, 255, 120], parameters: QUAKE_DEPTH }));
     if (rip.length) out.push(new deck.ScatterplotLayer({ id: 'ripple', data: rip, coordinateSystem: deck.COORDINATE_SYSTEM.CARTESIAN, billboard: true, stroked: true, filled: false, radiusUnits: 'common',
       getPosition: function (x) { return P(ev.lon[x.i], ev.lat[x.i], zOf(ev.dep[x.i])); },
       getRadius: function (x) { return x.r + x.g * (12 * V.mpp + 2.5 * x.r); },
@@ -458,7 +518,7 @@
       getRadius: function (a) { return QC.aggRadius(a.meq, S) * V.mpp; },
       getFillColor: function (a) { var c = col(a); return [c[0], c[1], c[2], Math.round(158 * a.alpha)]; },
       getLineColor: function (a) { return [255, 255, 255, Math.round(242 * a.alpha)]; }, lineWidthUnits: 'pixels', getLineWidth: 1.6,
-      pickable: true, autoHighlight: true, highlightColor: [255, 255, 255, 110], parameters: NO_DEPTH }));
+      pickable: true, autoHighlight: true, highlightColor: [255, 255, 255, 110], parameters: QUAKE_DEPTH }));
     out.push(new deck.TextLayer({ id: 'kmLbl', data: items.filter(function (a) { return QC.aggRadius(a.meq, S) >= 10; }), coordinateSystem: deck.COORDINATE_SYSTEM.CARTESIAN,
       getPosition: function (a) { return P(ev.lon[a.ev], ev.lat[a.ev], zOf(ev.dep[a.ev])); }, getText: function (a) { return label(a); },
       getSize: function (a) { return Math.max(10, Math.min(16, QC.aggRadius(a.meq, S) * 0.55)); }, getColor: function (a) { return [255, 255, 255, Math.round(255 * a.alpha)]; },
@@ -512,6 +572,7 @@
     $('v3dCanvasBox').addEventListener('pointerdown', function () { if (V.spin) spin(false); }, true);
     $('v3dSpin').onclick = function () { spin(!V.spin); };
     $('v3dTerrain').onchange = function () { V.terrain = this.checked; update(); };
+    $('v3dMembrane').onchange = function () { V.membrane = this.checked; update(); };
     // 凡例と操作盤を隠す・出す（平面の地図でも使える。時刻は隠さない）
     var tog = function () { var h = !document.body.classList.contains('uiHidden'); document.body.classList.toggle('uiHidden', h);
       $('uiTog').textContent = h ? '凡例などを出す' : '凡例などを隠す'; };
