@@ -48,6 +48,7 @@ body.sideHidden #side { display: none; }
 #clock { left: 12px; top: 10px; font-size: 26px; font-weight: 700; color: #1d2433;
   text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 6px #fff; }
 #clockNote { left: 14px; top: 46px; font-size: 12px; color: #1d2433; text-shadow: 0 0 3px #fff, 0 0 3px #fff; }
+#kmBusy { display: none; left: 50%; top: 12px; transform: translateX(-50%); background: rgba(29,36,51,.78); color: #fff; font-size: 12px; padding: 3px 10px; border-radius: 10px; pointer-events: none; }
 #legend { left: 10px; top: 72px; background: rgba(255,255,255,.88); color: #1d2433; border-radius: 6px;
   padding: 6px 8px; font-size: 12px; line-height: 1.25; }
 #legend .row { display: flex; align-items: center; gap: 6px; height: 20px; }
@@ -119,6 +120,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     <div id="clock" class="ov"></div>
     <div id="clockNote" class="ov"></div>
     <div id="legend" class="ov"></div>
+    <div id="kmBusy" class="ov">集合マーカーをまとめ直しています…</div>
     <div id="tip"></div>
   </div>
   <div id="charts">

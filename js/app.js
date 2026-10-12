@@ -132,7 +132,11 @@
     map.on('moveend zoomend resize', scheduleViewIdx);
     map.on('moveend zoomend resize', function () {
       if (st.live) return;                                 // 地図の向きのつまみを動かしている間はまとめ直さない（離したときに 1 回）
-      st.viewVer = (st.viewVer || 0) + 1; if (S.mode !== 'time' && S.aggMethod === 'kmeans') drawMap();
+      // 続けて動かしている間はまとめ直さない。手が止まって KM_WAIT ms たってから（それまでは前の塊を描く）
+      clearTimeout(st.viewTimer);
+      st.viewTimer = setTimeout(function () {
+        st.viewVer = (st.viewVer || 0) + 1; if (S.mode !== 'time' && S.aggMethod === 'kmeans') drawMap();
+      }, st.rec ? 0 : KM_WAIT);
     });
     map.on('zoomstart', function () { c.style.visibility = 'hidden'; });
     map.on('zoomend', function () { c.style.visibility = ''; });
@@ -457,13 +461,62 @@
   // ---------------------------------------------------------------- k-means（震源の空間 xyz、再生は xyzt）
   /** マーカーの数（段階から求める。再生では同時に見える数） */
   function kNow() { return QC.kOfLevel(S.aggLevel); }
-  var KM_SAMPLE = 20000;   // 中心を求めるのに使う地震の数の上限（多いときは等間隔に間引く。割り当ては全部）
-  /** 地図に見えている範囲の地震を k-means でまとめる（dim 3＝xyz、4＝xyzt）。地図を動かし終えたときと設定を変えたときだけ */
+  var KM_MAX = QC.KM_MAX, KM_WAIT = 400;   // 地図を動かし終えてから、まとめ直しを始めるまでの待ち（ms）
+  /** 地図に見えている範囲の地震を k-means でまとめる（dim 3＝xyz、4＝xyzt）。地図を動かし終えたときと設定を変えたときだけ。
+   *  計算は別の計算場所（js/kmworker.js）で行い、その間は画面を止めない。答えが届くまでは、
+   *  見える範囲かマーカーの数だけが違う前の答えをそのまま描く（地震の選び方・期間が違う答えは描かない）。
+   *  書き出し中は、そのコマで答えが要るので画面の側で計算する */
   function kmClusters(dim) {
     // 段階ごとに計算結果を取っておく（同じ表示範囲・期間・重みなら、段階を行き来しても計算し直さない）
-    var base = [dim, S.kmDepthW, S.kmKmPerDay, st.fVer, st.viewVer, st.t0, st.t1].join('|'), key = base + '|' + kNow();
+    var same = [dim, S.kmDepthW, S.kmKmPerDay, st.fVer, st.t0, st.t1].join('|'), base = same + '|' + st.viewVer, key = base + '|' + kNow();
     if (!st.kmCache || st.kmCache.base !== base) st.kmCache = { base: base, byK: {} };
-    if (st.kmCache.byK[key]) return (st.km = st.kmCache.byK[key]);
+    if (st.kmCache.byK[key]) return (st.km = st.kmShown = st.kmCache.byK[key]);
+    var job = kmJob(dim);
+    if (st.rec || !kmWorker()) {
+      var r = QC.kmSolve(job);
+      return (st.km = st.kmCache.byK[key] = kmResult(key, same, dim, job, r));
+    }
+    if (!st.kmPending || st.kmPending.key !== key) {
+      st.kmSeq = (st.kmSeq || 0) + 1;
+      if (st.kmPending) { st.kmW.terminate(); st.kmW = null; kmWorker(); }    // 前の計算は途中でやめる（答えはもう要らない）
+      st.kmPending = { key: key, same: same, dim: dim, job: { dim: dim, k: job.k, K: job.K, t0: job.t0, t1: job.t1, s: job.s, n: job.ids.length, noDep: job.noDep }, seq: st.kmSeq, t: Date.now() };
+      job.seq = st.kmSeq;
+      st.kmW.postMessage(job, [job.P.buffer, job.ms.buffer, job.ids.buffer, job.ts.buffer]);
+      kmBusy(true);
+    }
+    var old = st.kmShown;
+    return old && old.same === same ? old : null;
+  }
+  /** 別の計算場所（使えないブラウザ・ファイルを直接開いたときは null → 画面の側で計算する） */
+  function kmWorker() {
+    if (st.kmW) return st.kmW;
+    if (st.kmNoWorker || !window.Worker) return null;
+    try { st.kmW = new Worker('js/kmworker.js'); }
+    catch (e) { st.kmNoWorker = true; return null; }
+    st.kmW.onmessage = function (e) {
+      var d = e.data, p = st.kmPending;
+      if (!p || d.seq !== p.seq) return;                  // 古い答え（もう別の範囲を頼んでいる）は捨てる
+      st.kmPending = null; kmBusy(false);
+      if (d.error) { setStatus('集合マーカーをまとめられませんでした：' + d.error, true); return; }
+      if (!st.kmCache || p.key.indexOf(st.kmCache.base + '|') !== 0) return;   // 届く前に条件が変わった
+      st.kmCache.byK[p.key] = kmResult(p.key, p.same, p.dim, p.job, d);
+      st.kmLastMs = d.ms;
+      drawMap();
+    };
+    st.kmW.onerror = function (e) {
+      // 計算場所が動かない（古いブラウザなど）：以後は画面の側で計算する
+      st.kmNoWorker = true; st.kmW = null; st.kmPending = null; kmBusy(false);
+      if (e && e.preventDefault) e.preventDefault();
+      drawMap();
+    };
+    return st.kmW;
+  }
+  function kmResult(key, same, dim, job, r) {
+    return (st.kmShown = { key: key, same: same, dim: dim, clusters: r.clusters, noDep: job.noDep, n: job.n != null ? job.n : job.ids.length, K: r.K, active: r.active });
+  }
+  function kmBusy(on) { var b = $('kmBusy'); if (b) b.style.display = on ? 'block' : 'none'; }
+  /** まとめる地震の座標を作る（見えている範囲だけ） */
+  function kmJob(dim) {
     var ev = st.ev, proj = makeProj(1), v = viewSize(), list = [], noDep = 0, idx = st.f.idx;
     for (var q = 0; q < idx.length; q++) {
       var i = idx[q], p = proj(i);
@@ -471,7 +524,7 @@
       if (isNaN(ev.dep[i])) { noDep++; continue; }
       list.push(i);
     }
-    var n = list.length, P = new Float64Array(n * dim), ms = new Float64Array(n), ids = new Int32Array(n), RAD = Math.PI / 180;
+    var n = list.length, P = new Float64Array(n * dim), ms = new Float64Array(n), ids = new Int32Array(n), ts = new Float64Array(n), RAD = Math.PI / 180;
     for (q = 0; q < n; q++) {
       i = list[q];
       // 東西・南北は km（東経137度を中心にした正弦図法。日本の範囲なら距離の歪みは小さい）、深さは km × 重み、時間は日 × 1日あたりの km
@@ -479,74 +532,24 @@
       P[q * dim + 1] = ev.lat[i] * 110.574;
       P[q * dim + 2] = Math.max(ev.dep[i], 0) * S.kmDepthW;
       if (dim === 4) P[q * dim + 3] = (ev.t[i] - st.t0) / DAY * S.kmKmPerDay;
-      ms[q] = ev.mag[i]; ids[q] = i;
+      ms[q] = ev.mag[i]; ids[q] = i; ts[q] = ev.t[i];
     }
     // 4 次元（再生）では k を「同時に見えるマーカーの数」にする：塊は時期でも分かれるので、全体の塊の数を増やす。
-    // 初めの値は「期間を km にした長さ ÷ 塊 1 つ分の広さの一辺」倍。まとめたあと実際に数えて、足りなければ 1 回だけ増やす
-    var K = kNow(), v2 = viewSize(), ppk = QC.pxPerKm(map.getCenter().lat, map.getZoom());
+    // 初めの値は「期間を km にした長さ ÷ 塊 1 つ分の広さの一辺」倍。まとめたあと実際に数え、外れていれば 1 回だけまとめ直す（QC.kmSolve）
+    var k = kNow(), K = k, ppk = QC.pxPerKm(map.getCenter().lat, map.getZoom());
     if (dim === 4) {
-      var cellKm = Math.sqrt((v2.W / ppk) * (v2.H / ppk) / kNow()), spanKm = (st.t1 - st.t0) / DAY * S.kmKmPerDay;
-      K = Math.min(KM_MAX, Math.max(kNow(), Math.round(kNow() * spanKm / cellKm)));
+      var cellKm = Math.sqrt((v.W / ppk) * (v.H / ppk) / k), spanKm = (st.t1 - st.t0) / DAY * S.kmKmPerDay;
+      K = Math.min(KM_MAX, Math.max(k, Math.round(k * spanKm / cellKm)));
     }
-    var fit = kmFit(P, dim, ms, ids, K), active = dim === 4 ? kmActiveMedian(fit) : fit.length;
-    // 多すぎても少なすぎても（目標の ±15% を外れたら）、外れた割合だけ塊の数を変えて 1 回だけまとめ直す
-    if (dim === 4 && (active < 0.85 * kNow() || active > 1.15 * kNow()) && !(active < kNow() && K >= KM_MAX)) {
-      K = Math.min(KM_MAX, Math.max(kNow(), Math.round(K * kNow() / Math.max(active, 1))));
-      fit = kmFit(P, dim, ms, ids, K); active = kmActiveMedian(fit);
-    }
-    st.km = st.kmCache.byK[key] = { key: key, dim: dim, clusters: fit, noDep: noDep, n: n, K: K, active: active };
-    return st.km;
+    return { P: P, dim: dim, ms: ms, ids: ids, ts: ts, k: k, K: K, t0: st.t0, t1: st.t1, noDep: noDep,
+             s: { life1: S.life1, lifeGrowth: S.lifeGrowth, lifeMin: S.lifeMin, lifeMax: S.lifeMax } };
   }
-  var KM_MAX = 600;
-  /** 中心を求め（多いときは間引いた地震で）、全部の地震を割り当て、再生用の累積を作る */
-  function kmFit(P, dim, ms, ids, K) {
-    var ev = st.ev, n = ids.length, cap = K > 100 ? 8000 : KM_SAMPLE;
-    var stride = Math.max(1, Math.ceil(n / cap)), SP = P, q;
-    if (stride > 1) {
-      var m = Math.floor(n / stride); SP = new Float64Array(m * dim);
-      for (q = 0; q < m; q++) for (var j = 0; j < dim; j++) SP[q * dim + j] = P[q * stride * dim + j];
-    }
-    var C = QC.kmeans(SP, dim, K, { seed: 7, iters: K > 100 ? 20 : 30 }), cl = QC.kmeansClusters(P, dim, ms, ids, C);
-    cl.forEach(function (g) {
-      // 塊の広がり（東西・南北だけ、km）と、再生用の「その時刻までの」累積（members は時刻順）
-      var ss = 0, L = g.members.length, best = Infinity, bi = -1, mx = -Infinity, mxi = -1, E = 0;
-      g.times = new Float64Array(L); g.cumE = new Float64Array(L); g.bestAt = new Int32Array(L); g.maxAt = new Int32Array(L);
-      for (var a = 0; a < L; a++) {
-        var pt = g.members[a], dx = P[pt * dim] - g.c[0], dy = P[pt * dim + 1] - g.c[1], d = 0;
-        ss += dx * dx + dy * dy;
-        for (var b = 0; b < dim; b++) { var e = P[pt * dim + b] - g.c[b]; d += e * e; }
-        if (d < best) { best = d; bi = ids[pt]; }
-        if (ms[pt] > mx) { mx = ms[pt]; mxi = ids[pt]; }
-        E += QC.energyJ(ms[pt]);
-        g.times[a] = ev.t[ids[pt]]; g.cumE[a] = E; g.bestAt[a] = bi; g.maxAt[a] = mxi;
-      }
-      g.rmsXY = Math.sqrt(ss / L); g.ev = ids[g.mi];
-    });
-    return cl;
-  }
-  /** 期間内の 9 つの時刻で、見えている塊の数の中央値 */
-  function kmActiveMedian(cl) {
-    var c = [];
-    for (var s = 1; s <= 9; s++) {
-      var T = st.t0 + (st.t1 - st.t0) * s / 10, a = 0;
-      for (var q = 0; q < cl.length; q++) if (kmAt(cl[q], T)) a++;
-      c.push(a);
-    }
-    c.sort(function (x, y) { return x - y; });
-    return c[4];
-  }
-  /** k-means の塊を、時刻 T の姿に（T が null なら期間の合計）。まだ地震が起きていない塊は null */
-  function kmAt(g, T) {
-    if (T == null) return { ev: g.ev, n: g.n, E: g.E, meq: g.meq, maxI: g.maxI, alpha: 1 };
-    var lo = 0, hi = g.times.length;
-    while (lo < hi) { var m = (lo + hi) >> 1; if (g.times[m] <= T) lo = m + 1; else hi = m; }
-    if (!lo) return null;
-    var E = g.cumE[lo - 1], meq = QC.magOfEnergy(E), last = g.times[lo - 1], life = QC.lifeMs(meq, S), alpha = 1;
-    if (T > last) { alpha = 1 - (T - last) / life; if (alpha <= 0) return null; }   // 最後の地震から「残る時間」で消える
-    return { ev: g.bestAt[lo - 1], n: lo, E: E, meq: meq, maxI: g.maxAt[lo - 1], alpha: alpha };
-  }
+  /** 塊を時刻 T の姿に（T が null なら期間の合計） */
+  function kmAt(g, T) { return QC.kmAt(g, T, S); }
+  /** 計算中で、まだ描ける答えが無いとき */
+  function kmEmpty(dim) { return { clusters: [], noDep: 0, n: 0, K: 0, active: 0, dim: dim, pending: true }; }
   function drawKm(ctx, scale, W, H, T) {
-    var km = kmClusters(T == null ? 3 : 4), proj = makeProj(scale), z = map.getZoom(), drawn = [];
+    var km = kmClusters(T == null ? 3 : 4) || kmEmpty(T == null ? 3 : 4), proj = makeProj(scale), z = map.getZoom(), drawn = [];
     for (var q = km.clusters.length - 1; q >= 0; q--) {           // 大きい塊を先に（下に）
       var g = km.clusters[q], a = kmAt(g, T);
       if (!a) continue;
@@ -565,7 +568,7 @@
   }
   function drawXsecKm(ctx, Wv, Hv, top, height, scale, bg, ink, sub, T) {
     var ev = st.ev, ih = height - (XS.top + XS.bottom) * scale, maxKm = xsecMaxKm(ih, scale), y0 = top + XS.top * scale;
-    var km = kmClusters(T == null ? 3 : 4), proj = makeProj(scale), items = [], deep = 0, total = 0;
+    var km = kmClusters(T == null ? 3 : 4) || kmEmpty(T == null ? 3 : 4), proj = makeProj(scale), items = [], deep = 0, total = 0;
     ctx.save(); ctx.beginPath(); ctx.rect(0, top, Wv, height); ctx.clip();
     ctx.fillStyle = bg; ctx.fillRect(0, top, Wv, height);
     ctx.font = 10 * scale + 'px sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';

@@ -369,6 +369,56 @@ t('k-means（D 次元）：離れた集まりを分け、マーカーは実際�
   var g5 = QC.kmeansClusters(R, 3, [3, 3, 3, 3, 3, 3], [0, 1, 2, 3, 4, 5], QC.kmeans(R, 3, 2, { seed: 1 }));
   assert.deepStrictEqual(g5.map(function (q) { return Array.from(q.members).sort().join(); }).sort(), ['0,1,2', '3,4,5']);
 });
+t('k-means の一式（kmFit・kmAt・kmSolve）と、別の計算場所（js/kmworker.js）が同じ答えを返すこと', function () {
+  var D = QC.DAY;
+  // 1 つの塊に 3 回（1 日目 M3・2 日目 M5・5 日目 M3）。累積は時刻順、マーカーは中心に近い地震、最大は M5
+  var P = Float64Array.from([0, 0, 10, 2, 0, 10, 1, 0, 10]), ms = [3, 5, 3], ids = [40, 41, 42], ts = [1 * D, 2 * D, 5 * D];
+  var g = QC.kmFit(P, 3, ms, ids, ts, 1)[0];
+  assert.deepStrictEqual(Array.from(g.times), ts);
+  assert.ok(Math.abs(g.cumE[2] - g.E) < 1e-6 * g.E && Math.abs(g.cumE[0] - QC.energyJ(3)) < 1e-6 * g.cumE[0]);
+  assert.deepStrictEqual(Array.from(g.maxAt), [40, 41, 41]);
+  assert.deepStrictEqual(Array.from(g.bestAt), [40, 40, 42]);   // 中心は x=1：1 日目は 40 しか無い、5 日目に x=1 の 42 が入る
+  assert.strictEqual(g.ev, 42);
+  assert.ok(Math.abs(g.rmsXY - Math.sqrt(2 / 3)) < 1e-12);
+  assert.strictEqual(QC.kmAt(g, 0.5 * D, S), null);                       // まだ起きていない
+  assert.strictEqual(QC.kmAt(g, 2 * D, S).n, 2);                          // その時刻ちょうどの地震は入る
+  assert.strictEqual(QC.kmAt(g, 2 * D, S).maxI, 41);
+  var a5 = QC.kmAt(g, 5 * D, S), life = QC.lifeMs(a5.meq, S);
+  assert.strictEqual(a5.alpha, 1);
+  assert.ok(Math.abs(QC.kmAt(g, 5 * D + life / 2, S).alpha - 0.5) < 1e-9);   // 最後の地震から残る時間の半分で半分
+  assert.strictEqual(QC.kmAt(g, 5 * D + life + 1, S), null);
+  assert.strictEqual(QC.kmAt(g, null, S).n, 3);
+  // 再生（4 次元）：同時に見える数が目標から外れたら、外れた割合だけ塊の数を変えて 1 回まとめ直す
+  // 1000km ずつ離れた 20 か所、全部 0 日目に M6（期間 10 日のあいだ消えない）。目標 5 個
+  var Q = [], m20 = [], i20 = [], t20 = [];
+  for (var j = 0; j < 20; j++) { Q.push(j * 1000, 0, 10, 0); m20.push(6); i20.push(j); t20.push(0); }
+  Q = Float64Array.from(Q);
+  var job = function (K, k) { return { P: Q, dim: 4, ms: m20, ids: i20, ts: t20, k: k || 5, K: K, t0: 0, t1: 10 * D, s: S }; };
+  assert.deepStrictEqual([2, 5, 6, 7].map(function (K) { var r = QC.kmSolve(job(K)); return [r.K, r.active, r.clusters.length]; }),
+    [[5, 5, 5],      // 2 個しか見えない → 2×5/2 = 5 個でまとめ直し
+     [5, 5, 5],      // 合っていればそのまま
+     [5, 5, 5],      // 6 は 5 の +15%（5.75）を超える → 6×5/6 = 5
+     [5, 5, 5]]);
+  assert.deepStrictEqual((function () { var r = QC.kmSolve(job(23, 20)); return [r.K, r.active]; })(), [23, 20]);   // 20 か所しか無い：23 個頼んでも見えるのは 20（±15% 以内）
+  var r3 = QC.kmSolve({ P: Q.filter(function (_, i) { return i % 4 !== 3; }), dim: 3, ms: m20, ids: i20, ts: t20, k: 5, K: 2, t0: 0, t1: 10 * D, s: S });
+  assert.deepStrictEqual([r3.K, r3.active], [2, 2]);                        // 静止画（3 次元）はまとめ直さない
+  // 別の計算場所：js/kmworker.js を Node の中で動かし、画面で計算したときと同じ塊になること（番号を付けて返す）
+  var vm = require('vm'), fs = require('fs'), path = require('path'), sent = [];
+  var ctx = { postMessage: function (m) { sent.push(m); }, Float64Array: Float64Array, Int32Array: Int32Array };
+  ctx.self = ctx;
+  ctx.importScripts = function (f) { vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8'), ctx); };
+  vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'kmworker.js'), 'utf8'), ctx);
+  var want = QC.kmSolve(job(2)), w = job(2); w.seq = 9;
+  ctx.onmessage({ data: w });
+  assert.strictEqual(sent.length, 1);
+  assert.strictEqual(sent[0].seq, 9);
+  assert.deepStrictEqual([sent[0].K, sent[0].active], [want.K, want.active]);
+  var sig = function (cl) { return JSON.stringify(cl.map(function (c) { return [c.ev, Array.from(c.members), c.n, Array.from(c.cumE), Array.from(c.bestAt)]; })); };
+  assert.strictEqual(sig(sent[0].clusters), sig(want.clusters));    // 別の計算場所の配列は Node では別の世界の物なので、文字にして比べる
+  ctx.onmessage({ data: { seq: 10, P: Q, dim: 4 } });                       // 壊れた頼み：落ちずに理由を返す
+  assert.ok(sent[1].seq === 10 && sent[1].error);
+});
 t('時間の幅で切り出す：開始は含まず、終わり（T）は含む', function () {
   var ev = evOf(['2024-01-01T00:00:00.0,35,135,10,2,,P,,', '2024-01-02T00:00:00.0,35,135,10,2,,P,,',
                  '2024-01-03T00:00:00.0,35,135,10,2,,P,,', '2024-01-04T00:00:00.0,35,135,10,2,,P,,']);

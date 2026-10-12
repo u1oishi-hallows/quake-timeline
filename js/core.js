@@ -428,6 +428,68 @@
     return out;
   }
 
+  // ---------------------------------------------------------------- k-means の一式（画面とは別の計算場所 js/kmworker.js でも同じものを使う）
+  /** 中心を求め（多いときは等間隔に間引いた点で）、全部の点を割り当て、再生用の累積を作る。
+   *  P は点の座標（dim 次元）、ms は M、ids は地震の番号、ts は発生時刻（時刻順に並んでいること） */
+  function kmFit(P, dim, ms, ids, ts, K) {
+    var n = ids.length, cap = K > 100 ? 8000 : 20000;
+    var stride = Math.max(1, Math.ceil(n / cap)), SP = P, q;
+    if (stride > 1) {
+      var m = Math.floor(n / stride); SP = new Float64Array(m * dim);
+      for (q = 0; q < m; q++) for (var j = 0; j < dim; j++) SP[q * dim + j] = P[q * stride * dim + j];
+    }
+    var C = kmeans(SP, dim, K, { seed: 7, iters: K > 100 ? 20 : 30 }), cl = kmeansClusters(P, dim, ms, ids, C);
+    cl.forEach(function (g) {
+      // 塊の広がり（東西・南北だけ、km）と、再生用の「その時刻までの」累積（members は時刻順）
+      var ss = 0, L = g.members.length, best = Infinity, bi = -1, mx = -Infinity, mxi = -1, E = 0;
+      g.times = new Float64Array(L); g.cumE = new Float64Array(L); g.bestAt = new Int32Array(L); g.maxAt = new Int32Array(L);
+      for (var a = 0; a < L; a++) {
+        var pt = g.members[a], dx = P[pt * dim] - g.c[0], dy = P[pt * dim + 1] - g.c[1], d = 0;
+        ss += dx * dx + dy * dy;
+        for (var b = 0; b < dim; b++) { var e = P[pt * dim + b] - g.c[b]; d += e * e; }
+        if (d < best) { best = d; bi = ids[pt]; }
+        if (ms[pt] > mx) { mx = ms[pt]; mxi = ids[pt]; }
+        E += energyJ(ms[pt]);
+        g.times[a] = ts[pt]; g.cumE[a] = E; g.bestAt[a] = bi; g.maxAt[a] = mxi;
+      }
+      g.rmsXY = Math.sqrt(ss / L); g.ev = ids[g.mi];
+    });
+    return cl;
+  }
+  /** k-means の塊を、時刻 T の姿に（T が null なら期間の合計）。まだ地震が起きていない塊・消えた塊は null。s は設定（残る時間） */
+  function kmAt(g, T, s) {
+    if (T == null) return { ev: g.ev, n: g.n, E: g.E, meq: g.meq, maxI: g.maxI, alpha: 1 };
+    var lo = 0, hi = g.times.length;
+    while (lo < hi) { var m = (lo + hi) >> 1; if (g.times[m] <= T) lo = m + 1; else hi = m; }
+    if (!lo) return null;
+    var E = g.cumE[lo - 1], meq = magOfEnergy(E), last = g.times[lo - 1], life = lifeMs(meq, s), alpha = 1;
+    if (T > last) { alpha = 1 - (T - last) / life; if (alpha <= 0) return null; }   // 最後の地震から「残る時間」で消える
+    return { ev: g.bestAt[lo - 1], n: lo, E: E, meq: meq, maxI: g.maxAt[lo - 1], alpha: alpha };
+  }
+  /** 期間内の 9 つの時刻で、見えている塊の数の中央値 */
+  function kmActiveMedian(cl, t0, t1, s) {
+    var c = [];
+    for (var k = 1; k <= 9; k++) {
+      var T = t0 + (t1 - t0) * k / 10, a = 0;
+      for (var q = 0; q < cl.length; q++) if (kmAt(cl[q], T, s)) a++;
+      c.push(a);
+    }
+    c.sort(function (x, y) { return x - y; });
+    return c[4];
+  }
+  var KM_MAX = 600;
+  /** まとめる一式。job = { P, dim, ms, ids, ts, k（目標の数）, K（初めの塊の数）, t0, t1, s }。
+   *  4 次元（再生）では、同時に見える数が目標の ±15% を外れたら、外れた割合だけ塊の数を変えて 1 回だけまとめ直す */
+  function kmSolve(job) {
+    var k = job.k, K = job.K, fit = kmFit(job.P, job.dim, job.ms, job.ids, job.ts, K);
+    var active = job.dim === 4 ? kmActiveMedian(fit, job.t0, job.t1, job.s) : fit.length;
+    if (job.dim === 4 && (active < 0.85 * k || active > 1.15 * k) && !(active < k && K >= KM_MAX)) {
+      K = Math.min(KM_MAX, Math.max(k, Math.round(K * k / Math.max(active, 1))));
+      fit = kmFit(job.P, job.dim, job.ms, job.ids, job.ts, K); active = kmActiveMedian(fit, job.t0, job.t1, job.s);
+    }
+    return { clusters: fit, K: K, active: active };
+  }
+
   /** idx（時刻順）のうち、tLo < 時刻 ≦ tHi の地震の位置 [k0, k1) */
   function idxRange(ev, idx, tLo, tHi) {
     var lo = 0, hi = idx.length;
@@ -515,7 +577,7 @@
     DEP_COLORS: DEP_COLORS, DEP_UNKNOWN: DEP_UNKNOWN, INT_STYLES: INT_STYLES, INT_UNKNOWN: INT_UNKNOWN,
     intensityStyle: intensityStyle, colorOf: colorOf, styleOf: styleOf, ageColor: ageColor, alphas: alphas,
     visibleAt: visibleAt, depthLook: depthLook, energyJ: energyJ, magOfEnergy: magOfEnergy, formatEnergy: formatEnergy,
-    rng: rng, kmeans: kmeans, kmeansClusters: kmeansClusters, aggregate: aggregate, aggState: aggState, aggAdd: aggAdd, aggFinish: aggFinish, aggRadius: aggRadius, kOfLevel: kOfLevel, idxRange: idxRange, computeStats: computeStats, rotScreen: rotScreen, rotDelta: rotDelta,
+    rng: rng, kmeans: kmeans, kmeansClusters: kmeansClusters, kmFit: kmFit, kmAt: kmAt, kmActiveMedian: kmActiveMedian, kmSolve: kmSolve, KM_MAX: KM_MAX, aggregate: aggregate, aggState: aggState, aggAdd: aggAdd, aggFinish: aggFinish, aggRadius: aggRadius, kOfLevel: kOfLevel, idxRange: idxRange, computeStats: computeStats, rotScreen: rotScreen, rotDelta: rotDelta,
     screenXAzimuth: screenXAzimuth, dirName: dirName, depthTicks: depthTicks, project0: project0, estIntensity: estIntensity, INT_THRESHOLDS: INT_THRESHOLDS,
     RING_LEVELS: RING_LEVELS, ringRadiiKm: ringRadiiKm, sphereRadiusKm: sphereRadiusKm, geomSphereRadiusKm: geomSphereRadiusKm, surfaceRadiusKm: surfaceRadiusKm, pxPerKm: pxPerKm, dailyCounts: dailyCounts, timeTicks: timeTicks
   };
