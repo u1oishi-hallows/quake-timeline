@@ -88,6 +88,8 @@ MUTANTS = [
     ('js/core.js', "if (job.dim === 4 && (active < 0.85 * k || active > 1.15 * k)", "if (job.dim === 4 && (active < 0.85 * k)", 'k-means 再生：多すぎるときにまとめ直さない'),
     ('js/core.js', "K = Math.min(KM_MAX, Math.max(k, Math.round(K * k / Math.max(active, 1))));", "K = Math.min(KM_MAX, Math.max(k, K + 1));", 'k-means 再生：外れた割合で塊の数を変えない'),
     ('js/core.js', "g.times[a] = ts[pt]; g.cumE[a] = E; g.bestAt[a] = bi; g.maxAt[a] = mxi;", "g.times[a] = ts[pt]; g.cumE[a] = E; g.bestAt[a] = ids[pt]; g.maxAt[a] = mxi;", 'k-means 再生：マーカーを中心に近い地震に置かない'),
+    ('js/core.js', "P[q * dim + 2] = Math.max(ev.dep[i], 0) * depthW;", "P[q * dim + 2] = ev.dep[i] * depthW;", 'k-means の座標：地表より上（負の深さ）を 0 にしない'),
+    ('js/core.js', "var cellKm = Math.sqrt(areaKm2 / k), spanKm", "var cellKm = Math.sqrt(areaKm2), spanKm", 'k-means 再生：初めの塊の数で塊 1 つ分の広さを使わない'),
     ('js/kmworker.js', "self.postMessage({ seq: job.seq, clusters", "self.postMessage({ seq: 0, clusters", '別の計算場所：答えに番号を付けない'),
     ('js/core.js', "if (cnt[c]) for (j = 0; j < D; j++) C[c * D + j] = sum2[c * D + j] / cnt[c];", "if (cnt[c]) for (j = 0; j < 1; j++) C[c * D + j] = sum2[c * D + j] / cnt[c];", 'k-means：中心の 2 次元目以降を動かさない'),
     ('js/core.js', "if (bd < q.bd) { q.bd = bd; q.mi = i; }", "if (q.mi < 0) { q.mi = i; }", 'k-means：マーカーを中心に近い地震に置かない'),

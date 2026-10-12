@@ -45,6 +45,20 @@ body.sideHidden #app { grid-template-columns: 1fr 0; }
 body.sideHidden #side { display: none; }
 #quakeCanvas { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 450; }
 .ov { position: absolute; z-index: 500; pointer-events: none; }
+#v3d { display: none; position: absolute; inset: 0; z-index: 470; background: #e9eef4; }
+#v3dCanvasBox { position: absolute; inset: 0; }
+#v3dBar { position: absolute; left: 8px; bottom: 22px; z-index: 620; max-width: min(620px, calc(100% - 16px)); display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center;
+  background: rgba(255,255,255,.92); border: 1px solid #b9c0cc; border-radius: 6px; padding: 5px 7px; font-size: 12px; color: #1d2433; }
+#v3dBar button { font-size: 12px; padding: 3px 7px; }
+#v3dBar label { display: inline-flex; align-items: center; gap: 3px; }
+#v3dMsg { flex-basis: 100%; color: #1d2433; }
+#v3dBar .hint { flex-basis: 100%; color: #5b6475; font-size: 11px; }
+#roiPick { display: none; position: absolute; inset: 0; z-index: 640; cursor: crosshair; background: rgba(29,36,51,.08); touch-action: none; }
+#roiBox { display: none; position: absolute; border: 2px dashed #d81b60; background: rgba(216,27,96,.08); pointer-events: none; }
+#roiBar { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: center;
+  background: rgba(255,255,255,.95); border: 1px solid #b9c0cc; border-radius: 6px; padding: 6px 10px; font-size: 13px; color: #1d2433; cursor: default; max-width: calc(100% - 20px); }
+#roiBar button { font-size: 12px; padding: 3px 8px; }
+body.v3d #mapCtl, body.v3d #xsecBox, body.v3d #kmBusy { display: none !important; }
 #clock { left: 12px; top: 10px; font-size: 26px; font-weight: 700; color: #1d2433;
   text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 6px #fff; }
 #clockNote { left: 14px; top: 46px; font-size: 12px; color: #1d2433; text-shadow: 0 0 3px #fff, 0 0 3px #fff; }
@@ -114,6 +128,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     <div id="mapCtl">
       <button id="zIn" title="拡大">＋</button><button id="zOut" title="縮小">−</button>
       <button id="north" title="北を上にする"><svg id="northSvg" width="22" height="22" viewBox="-11 -11 22 22" aria-hidden="true"><path d="M0,-9 L5,6 L0,3 L-5,6 Z" fill="#c62828"/><text x="0" y="10" font-size="7" text-anchor="middle" fill="#1d2433">北</text></svg></button>
+      <button id="v3dBtn" title="範囲を選んで立体で見る（試作）" style="font-size:13px;font-weight:700">3D</button>
     </div>
     <div id="attrib"><a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>｜震源：気象庁</div>
     <button id="sideTab" title="操作盤を出し入れする">操作盤 ▶</button>
@@ -121,6 +136,18 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     <div id="clockNote" class="ov"></div>
     <div id="legend" class="ov"></div>
     <div id="kmBusy" class="ov">集合マーカーをまとめ直しています…</div>
+    <div id="roiPick"><div id="roiBox"></div>
+      <div id="roiBar"><span id="roiMsg"></span><button id="roiAll">今見えている範囲全部</button><button id="roiGo">この範囲を立体で見る</button><button id="roiRedo">選び直す</button><button id="roiCancel">やめる</button></div>
+    </div>
+    <div id="v3d"><div id="v3dCanvasBox"></div>
+      <div id="v3dBar">
+        <button id="v3dClose">◀ 平面の地図に戻る</button><button id="v3dRedo">範囲を選び直す</button><button id="v3dTilt">斜めから</button><button id="v3dTop">真上から</button>
+        <label>深さの強調 <select id="v3dExag"><option value="auto">自動</option><option value="1">×1（実際の比率）</option><option value="2">×2</option><option value="3">×3</option><option value="5">×5</option><option value="10">×10</option></select></label>
+        <label><input type="checkbox" id="v3dShadow" checked>地表の影</label><label><input type="checkbox" id="v3dDrop" checked>震央からの線（M4以上）</label>
+        <div id="v3dMsg"></div>
+        <div class="hint">ドラッグ：移動　右ドラッグ・Ctrl＋ドラッグ（2本指）：回転と傾き　ホイール（ピンチ）：拡大。地面は平ら（地形・海の深さは描かない）。試作</div>
+      </div>
+    </div>
     <div id="tip"></div>
   </div>
   <div id="charts">
@@ -180,6 +207,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
         <select id="xsDepth"><option value="equal">縦横同じ縮尺</option><option value="30">0〜30km</option><option value="60">0〜60km</option><option value="100">0〜100km</option><option value="200">0〜200km</option><option value="400">0〜400km</option><option value="700">0〜700km</option></select></label>
       <label class="chk"><input type="checkbox" id="showMt"> M-T図と1日あたりの回数</label>
       <label class="chk"><input type="checkbox" id="chartView"> グラフは地図に見えている範囲の地震だけで描く</label>
+      <button id="v3dSide" type="button" style="margin-top:6px">立体で見る（範囲を選ぶ・試作）</button>
+      <div class="note">地図の上で範囲を囲むと、その範囲の地震を半透明の地面の下に実際の深さで立体に描く。表示モード（1 つずつ・期間の合計・時間に沿った集合マーカー）と再生はそのまま使える。回しても計算し直さない</div>
       <div class="note">地図を回すと、断面図の横軸も回した後の横方向になります（両端に方位を出します）。回している間、ドラッグとホイールでの拡大は地図の中心を基準に動きます。</div>
     </fieldset>
     <fieldset>
@@ -278,5 +307,6 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 <script src="vendor/leaflet.min.js"></script>
 <script src="js/core.js"></script>
 <script src="js/app.js"></script>
+<script src="js/view3d.js"></script>
 </body>
 </html>

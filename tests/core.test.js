@@ -402,6 +402,18 @@ t('k-means の一式（kmFit・kmAt・kmSolve）と、別の計算場所（js/km
   assert.deepStrictEqual((function () { var r = QC.kmSolve(job(23, 20)); return [r.K, r.active]; })(), [23, 20]);   // 20 か所しか無い：23 個頼んでも見えるのは 20（±15% 以内）
   var r3 = QC.kmSolve({ P: Q.filter(function (_, i) { return i % 4 !== 3; }), dim: 3, ms: m20, ids: i20, ts: t20, k: 5, K: 2, t0: 0, t1: 10 * D, s: S });
   assert.deepStrictEqual([r3.K, r3.active], [2, 2]);                        // 静止画（3 次元）はまとめ直さない
+  // 座標：東経137度で x=0、東へ 1 度で 111.32×cos(緯度) km、深さは重み倍（地表より上は 0）、時間は日 × 1日あたりの km
+  var ev2 = { lon: [137, 138], lat: [35, 60], dep: [-2, 50], mag: [3, 4], t: [10 * D, 12 * D] };
+  var pt = QC.kmPoints(ev2, [1, 0], 4, 2, 3, 10 * D);
+  assert.deepStrictEqual(Array.from(pt.ids), [1, 0]);
+  assert.ok(Math.abs(pt.P[0] - 111.32 * 0.5) < 1e-9 && Math.abs(pt.P[1] - 60 * 110.574) < 1e-9);
+  assert.deepStrictEqual([pt.P[2], pt.P[3], pt.P[4], pt.P[6], pt.P[7]], [100, 6, 0, 0, 0]);
+  assert.deepStrictEqual([Array.from(pt.ms), Array.from(pt.ts)], [[4, 3], [12 * D, 10 * D]]);
+  assert.strictEqual(QC.kmPoints(ev2, [0], 3, 1, 3, 0).P.length, 3);
+  // 初めの塊の数：10 個・100×100km・期間 100 日・1日 3km → 一辺 sqrt(1000)≈31.6km、期間 300km → 9.49 倍 → 95 個。上限 600、目標より少なくしない
+  assert.strictEqual(QC.kmInitialK(10, 10000, 100, 3), 95);
+  assert.strictEqual(QC.kmInitialK(10, 10000, 1000, 3), QC.KM_MAX);
+  assert.strictEqual(QC.kmInitialK(10, 1e8, 1, 3), 10);
   // 別の計算場所：js/kmworker.js を Node の中で動かし、画面で計算したときと同じ塊になること（番号を付けて返す）
   var vm = require('vm'), fs = require('fs'), path = require('path'), sent = [];
   var ctx = { postMessage: function (m) { sent.push(m); }, Float64Array: Float64Array, Int32Array: Int32Array };

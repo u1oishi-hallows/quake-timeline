@@ -218,7 +218,7 @@
     var last = null, ids = {};
     wrap.addEventListener('pointerdown', function (e) {
       ids[e.pointerId] = true;
-      if (!rotated() || st.rec || e.button !== 0 || e.target.closest('#mapCtl,#sideTab,#attrib')) return;
+      if (!rotated() || st.rec || st.v3d || e.button !== 0 || e.target.closest('#mapCtl,#sideTab,#attrib')) return;
       if (Object.keys(ids).length > 1) { last = null; return; }     // 2 本指は Leaflet の拡大に任せる
       last = [e.clientX, e.clientY];
     });
@@ -377,6 +377,7 @@
     if (!st.f) return;
     drawMap();
     drawCharts();
+    if (st.v3d && window.V3) V3.update();      // 立体表示（js/view3d.js）
     if (sumView()) {
       $('clock').textContent = '期間の合計';
       $('clockNote').textContent = periodText() + '（' + chartIdx().length.toLocaleString() + ' 回）';
@@ -392,6 +393,7 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, c.width, c.height);
     var v = viewSize();
+    if (st.v3d) { st.drawn = []; drawStatsScreen(); return; }      // 立体表示の間は平面の地図に描かない（隠れているので）
     st.drawn = sumView() ? drawAggregate(ctx, 1, v.W, v.H)
       : S.mode === 'timeAgg' ? drawTimeAgg(ctx, st.T, 1, v.W, v.H) : drawQuakes(ctx, st.T, makeProj(1), 1, v.W, v.H);
     drawStatsScreen();
@@ -524,24 +526,14 @@
       if (isNaN(ev.dep[i])) { noDep++; continue; }
       list.push(i);
     }
-    var n = list.length, P = new Float64Array(n * dim), ms = new Float64Array(n), ids = new Int32Array(n), ts = new Float64Array(n), RAD = Math.PI / 180;
-    for (q = 0; q < n; q++) {
-      i = list[q];
-      // 東西・南北は km（東経137度を中心にした正弦図法。日本の範囲なら距離の歪みは小さい）、深さは km × 重み、時間は日 × 1日あたりの km
-      P[q * dim] = (ev.lon[i] - 137) * 111.32 * Math.cos(ev.lat[i] * RAD);
-      P[q * dim + 1] = ev.lat[i] * 110.574;
-      P[q * dim + 2] = Math.max(ev.dep[i], 0) * S.kmDepthW;
-      if (dim === 4) P[q * dim + 3] = (ev.t[i] - st.t0) / DAY * S.kmKmPerDay;
-      ms[q] = ev.mag[i]; ids[q] = i; ts[q] = ev.t[i];
-    }
-    // 4 次元（再生）では k を「同時に見えるマーカーの数」にする：塊は時期でも分かれるので、全体の塊の数を増やす。
-    // 初めの値は「期間を km にした長さ ÷ 塊 1 つ分の広さの一辺」倍。まとめたあと実際に数え、外れていれば 1 回だけまとめ直す（QC.kmSolve）
-    var k = kNow(), K = k, ppk = QC.pxPerKm(map.getCenter().lat, map.getZoom());
-    if (dim === 4) {
-      var cellKm = Math.sqrt((v.W / ppk) * (v.H / ppk) / k), spanKm = (st.t1 - st.t0) / DAY * S.kmKmPerDay;
-      K = Math.min(KM_MAX, Math.max(k, Math.round(k * spanKm / cellKm)));
-    }
-    return { P: P, dim: dim, ms: ms, ids: ids, ts: ts, k: k, K: K, t0: st.t0, t1: st.t1, noDep: noDep,
+    return kmJobOf(list, dim, (v.W * v.H) / Math.pow(QC.pxPerKm(map.getCenter().lat, map.getZoom()), 2), noDep);
+  }
+  /** まとめる頼み（list は地震の番号、時刻順。areaKm2 はまとめる範囲の広さ）。立体表示（js/view3d.js）でも使う */
+  function kmJobOf(list, dim, areaKm2, noDep) {
+    var pt = QC.kmPoints(st.ev, list, dim, S.kmDepthW, S.kmKmPerDay, st.t0), k = kNow();
+    // 4 次元（再生）では k を「同時に見えるマーカーの数」にする。まとめたあと実際に数え、外れていれば 1 回だけまとめ直す（QC.kmSolve）
+    var K = dim === 4 ? QC.kmInitialK(k, areaKm2, (st.t1 - st.t0) / DAY, S.kmKmPerDay) : k;
+    return { P: pt.P, dim: dim, ms: pt.ms, ids: pt.ids, ts: pt.ts, k: k, K: K, t0: st.t0, t1: st.t1, noDep: noDep || 0,
              s: { life1: S.life1, lifeGrowth: S.lifeGrowth, lifeMin: S.lifeMin, lifeMax: S.lifeMax } };
   }
   /** 塊を時刻 T の姿に（T が null なら期間の合計） */
@@ -903,7 +895,7 @@
   }
 
   function onHover(e) {
-    if (!st.drawn || st.rec) return;
+    if (!st.drawn || st.rec || st.v3d) return;
     var rc = $('mapwrap').getBoundingClientRect(), x = e.clientX - rc.left, y = e.clientY - rc.top;
     var best = null, bd = Infinity;
     for (var n = st.drawn.length - 1; n >= 0; n--) {   // 上に描いた（小さい）ものを先に
@@ -983,10 +975,13 @@
       '<text x="64" y="52" font-size="10" fill="#333">点＝震央</text></svg>' +
       '<div class="note" style="color:#333;max-width:150px">' + sphereNote() + '</div>';
     else if (S.colorMode !== 'mag' && S.shape === 'circle') h += '<div class="note" style="color:#333">円の大きさ＝M</div>';
-    if (S.shape === 'circle' && S.vol > 0) h += '<div class="note" style="color:#333;max-width:150px">' + depthNote() + '</div>';
+    if (S.shape === 'circle' && S.vol > 0 && !st.v3d) h += '<div class="note" style="color:#333;max-width:150px">' + depthNote() + '</div>';   // 立体表示では奥行きの効きは使わない
     $('legend').innerHTML = h + nankaiLegendHtml();
   }
   function aggNote() {
+    if (st.v3d) return '集合マーカー：k-means（震源の' + (sumView() ? '東西・南北・深さの3次元' : '東西・南北・深さ・時間の4次元') + '）で、立体表示に選んだ範囲の地震を' +
+      (sumView() ? kNow() + '個に' : '同時に約' + kNow() + '個見えるように') + 'まとめ、位置＝中心に近い実際の震源、大きさと色＝推定エネルギーの合計（M相当）、数字＝' +
+      { meq: 'M相当', count: '回数', energy: 'エネルギー' }[S.aggLabel] + (S.aggMethod === 'kmeans' ? '' : '（立体表示ではいつも k-means）');
     if (S.aggMethod === 'kmeans') return '集合マーカー：k-means（震源の' + (sumView() ? '東西・南北・深さの3次元' : '東西・南北・深さ・時間の4次元') +
       '）で地図に見えている範囲の地震を' + (sumView() ? kNow() + '個に' : '同時に約' + kNow() + '個見えるように') + 'まとめ、位置＝中心に近い実際の震央、大きさと色＝推定エネルギーの合計（M相当）、数字＝' +
       { meq: 'M相当', count: '回数', energy: 'エネルギー' }[S.aggLabel] + '、点線＝塊の広がり';
@@ -1106,6 +1101,7 @@
   /** 地図に見えている範囲（回転を含む）にある、描く対象の地震 */
   function computeViewIdx() {
     if (!st.f || !map) return;
+    if (st.v3d && window.V3) { st.viewIdx = V3.roiAll(); return; }   // 立体表示の間は、選んだ範囲の地震
     var proj = makeProj(1), v = viewSize(), idx = st.f.idx, out = [];
     for (var k = 0; k < idx.length; k++) {
       var p = proj(idx[k]);
@@ -1120,7 +1116,7 @@
     viewTimer = setTimeout(function () { computeViewIdx(); renderChartBases(); drawCharts(); }, 250);
   }
   function chartIdx() { return S.chartView && st.viewIdx ? st.viewIdx : st.f.idx; }
-  function chartScopeLabel() { return S.chartView ? '地図に見えている範囲の地震' : '期間内の全域の地震'; }
+  function chartScopeLabel() { return S.chartView ? (st.v3d ? '立体表示の範囲の地震' : '地図に見えている範囲の地震') : '期間内の全域の地震'; }
 
   // ---------------------------------------------------------------- 操作盤の出し入れ
   function setSideHidden(h) {
@@ -1521,6 +1517,9 @@
     });
   }
   window.__app = { S: S, st: st, setT: setT, boot: boot, drawFrame: drawFrame, QC: QC, getMap: function () { return map; },
-    snapshotTiles: snapshotTiles, buildMtBase: buildMtBase, startRecording: startRecording };
+    snapshotTiles: snapshotTiles, buildMtBase: buildMtBase, startRecording: startRecording,
+    // 立体表示（js/view3d.js）から使う
+    kmJobOf: kmJobOf, sumView: sumView, redraw: function () { layoutRot(); drawAll(); },
+    refreshCharts: function () { computeViewIdx(); renderChartBases(); drawCharts(); renderLegend(); } };
   boot();
 })();

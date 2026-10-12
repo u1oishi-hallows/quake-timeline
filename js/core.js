@@ -478,6 +478,26 @@
     return c[4];
   }
   var KM_MAX = 600;
+  /** まとめる地震（ev の番号の並び list、時刻順）の座標。東西・南北は km（東経137度を中心にした正弦図法。日本の範囲なら距離の歪みは小さい）、
+   *  深さは km × depthW、時間（dim 4 のとき）は t0 からの日数 × kmPerDay */
+  function kmPoints(ev, list, dim, depthW, kmPerDay, t0) {
+    var n = list.length, P = new Float64Array(n * dim), ms = new Float64Array(n), ids = new Int32Array(n), ts = new Float64Array(n), RAD = Math.PI / 180;
+    for (var q = 0; q < n; q++) {
+      var i = list[q];
+      P[q * dim] = (ev.lon[i] - 137) * 111.32 * Math.cos(ev.lat[i] * RAD);
+      P[q * dim + 1] = ev.lat[i] * 110.574;
+      P[q * dim + 2] = Math.max(ev.dep[i], 0) * depthW;
+      if (dim === 4) P[q * dim + 3] = (ev.t[i] - t0) / DAY * kmPerDay;
+      ms[q] = ev.mag[i]; ids[q] = i; ts[q] = ev.t[i];
+    }
+    return { P: P, ms: ms, ids: ids, ts: ts };
+  }
+  /** 再生（4 次元）で初めに頼む塊の数：塊は時期でも分かれるので、「期間を km にした長さ ÷ 塊 1 つ分の広さの一辺」倍にする。
+   *  areaKm2 はまとめる範囲の広さ */
+  function kmInitialK(k, areaKm2, spanDays, kmPerDay) {
+    var cellKm = Math.sqrt(areaKm2 / k), spanKm = spanDays * kmPerDay;
+    return Math.min(KM_MAX, Math.max(k, Math.round(k * spanKm / cellKm)));
+  }
   /** まとめる一式。job = { P, dim, ms, ids, ts, k（目標の数）, K（初めの塊の数）, t0, t1, s }。
    *  4 次元（再生）では、同時に見える数が目標の ±15% を外れたら、外れた割合だけ塊の数を変えて 1 回だけまとめ直す */
   function kmSolve(job) {
@@ -577,7 +597,7 @@
     DEP_COLORS: DEP_COLORS, DEP_UNKNOWN: DEP_UNKNOWN, INT_STYLES: INT_STYLES, INT_UNKNOWN: INT_UNKNOWN,
     intensityStyle: intensityStyle, colorOf: colorOf, styleOf: styleOf, ageColor: ageColor, alphas: alphas,
     visibleAt: visibleAt, depthLook: depthLook, energyJ: energyJ, magOfEnergy: magOfEnergy, formatEnergy: formatEnergy,
-    rng: rng, kmeans: kmeans, kmeansClusters: kmeansClusters, kmFit: kmFit, kmAt: kmAt, kmActiveMedian: kmActiveMedian, kmSolve: kmSolve, KM_MAX: KM_MAX, aggregate: aggregate, aggState: aggState, aggAdd: aggAdd, aggFinish: aggFinish, aggRadius: aggRadius, kOfLevel: kOfLevel, idxRange: idxRange, computeStats: computeStats, rotScreen: rotScreen, rotDelta: rotDelta,
+    rng: rng, kmeans: kmeans, kmeansClusters: kmeansClusters, kmFit: kmFit, kmAt: kmAt, kmActiveMedian: kmActiveMedian, kmSolve: kmSolve, kmPoints: kmPoints, kmInitialK: kmInitialK, KM_MAX: KM_MAX, aggregate: aggregate, aggState: aggState, aggAdd: aggAdd, aggFinish: aggFinish, aggRadius: aggRadius, kOfLevel: kOfLevel, idxRange: idxRange, computeStats: computeStats, rotScreen: rotScreen, rotDelta: rotDelta,
     screenXAzimuth: screenXAzimuth, dirName: dirName, depthTicks: depthTicks, project0: project0, estIntensity: estIntensity, INT_THRESHOLDS: INT_THRESHOLDS,
     RING_LEVELS: RING_LEVELS, ringRadiiKm: ringRadiiKm, sphereRadiusKm: sphereRadiusKm, geomSphereRadiusKm: geomSphereRadiusKm, surfaceRadiusKm: surfaceRadiusKm, pxPerKm: pxPerKm, dailyCounts: dailyCounts, timeTicks: timeTicks
   };
