@@ -148,7 +148,8 @@
   function createDeck() {
     V.deck = new deck.Deck({
       parent: $('v3dCanvasBox'),
-      views: new deck.MapView({ repeat: false }),
+      // 遠くの面（far）を地面の下の深いところまで延ばす（既定のままだと、強調した深い所が切れて見えない）
+      views: new deck.MapView({ repeat: false, farZMultiplier: 30, nearZMultiplier: 0.02 }),
       // 見え方は自分で持つ（viewState）。回転の中心を地面より下（箱の深さの真ん中）に置くため、position（中心の高さ）を毎回付け直す
       viewState: (V.vs = { longitude: 137, latitude: 37, zoom: 4, pitch: 0, bearing: 0, maxPitch: 85, position: [0, 0, 0] }),
       onViewStateChange: function (e) { setView(e.viewState); },
@@ -171,6 +172,14 @@
     var r = V.roi, box = $('v3dCanvasBox');
     var vp = new deck.WebMercatorViewport({ width: box.clientWidth, height: box.clientHeight }).fitBounds([[r.w, r.s], [r.e, r.n]], { padding: 60 });
     setView({ longitude: vp.longitude, latitude: vp.latitude, zoom: vp.zoom - (pitch ? 0.3 : 0), pitch: pitch, bearing: V.vs.bearing });
+  }
+  /** 箱（選んだ範囲 × 深さ × 強調）がカメラに入りきる倍率の上限。カメラは中心から「画面の高さ×1.5」の距離にいるので、
+   *  その距離が箱の対角線の 1.8 倍より短くならないようにする（短いとカメラが箱の中・地面の下に入り、何も見えなくなる） */
+  function maxZoomForBox() {
+    var r = V.roi, box = $('v3dCanvasBox'), H = box.clientHeight || 600, lat = (r.s + r.n) / 2;
+    var w = (r.e - r.w) * 111320 * Math.cos(lat * Math.PI / 180), h = (r.n - r.s) * 110574, dz = V.d ? V.d.maxKm * 1000 * V.exag : 0;
+    var diag = Math.sqrt(w * w + h * h + dz * dz);
+    return Math.log2(1.5 * H * 40075016.686 * Math.cos(lat * Math.PI / 180) / (512 * 1.8 * diag));
   }
   /** 見え方を決める。画面の中心は「地図の中心の真下、箱の深さの真ん中」（position＝その高さ）。回すとこの点のまわりに回る */
   function setView(v) {
@@ -241,7 +250,9 @@
     if (!V.open || !V.deck || !st.f) return;
     var d = roiData(), sum = A.sumView(), T = st.T;
     V.exag = V.exagSel === 'auto' ? autoExag(V.roi, d.maxKm) : +V.exagSel;    // 深さの強調は位置を写すときだけに効く（k-means は計算し直さない）
-    if (V.vs && V.vs.position[2] !== zOf(d.maxKm / 2)) setView(V.vs);          // 回転の中心の深さも合わせる
+    if (V.vs && V.vs.position[2] !== zOf(d.maxKm / 2)) {                        // 回転の中心の深さも合わせ、箱が入りきるまで引く
+      setView(Object.assign({}, V.vs, { zoom: Math.min(V.vs.zoom, maxZoomForBox()) }));
+    }
     var layers = [groundLayer(), frameLayer(d)].concat(frameLabels(d), srcLayers3d());
     var msg = d.idx.length.toLocaleString() + ' 回' + (d.noDep ? '（深さ不明 ' + d.noDep.toLocaleString() + ' 回は立体の位置が決まらないので描かない）' : '');
     if (sum || S.mode === 'timeAgg') {
@@ -275,14 +286,49 @@
   function terrainLayer() {
     var r = V.roi, x = V.exag, key = ['T', S.base, r.s, r.n, r.w, r.e, x].join('|');
     if (V.ground && V.groundKey === key) return V.ground;
-    V.groundKey = key;
-    return (V.ground = new deck.TerrainLayer({
-      id: 'terrain-' + x, elevationData: TERRAIN, texture: TILES[S.base] || TILES.pale, minZoom: 2, maxZoom: 12, tileSize: 256,
-      elevationDecoder: { rScaler: 256 * x, gScaler: 1 * x, bScaler: x / 256, offset: -32768 * x },
-      extent: [r.w, r.s, r.e, r.n], meshMaxError: 20 * x, opacity: 0.6, loadOptions: { worker: false },
-      extensions: [new deck.ClipExtension()], clipBounds: [r.w, r.s, r.e, r.n],
-      onTileError: function () { $('v3dMsg').textContent = '地形のタイルの一部を読めませんでした'; }
+    V.groundKey = key; V.terrainErr = 0;
+    var tex = TILES[S.base] || TILES.pale, texMax = S.base === 'blank' ? 14 : 18;
+    return (V.ground = new deck.TileLayer({
+      id: 'terrain-' + x + '-' + S.base, minZoom: 2, maxZoom: 11, tileSize: 256, extent: [r.w, r.s, r.e, r.n],
+      getTileData: function (t) { return terrainTile(t.index, x, tex, texMax, t.signal); },
+      onTileError: function (e) { V.terrainErr = (V.terrainErr || 0) + 1; V.terrainErrMsg = String(e && (e.message || e)); $('v3dMsg').textContent = '地形のタイルの一部を読めませんでした（' + V.terrainErrMsg.slice(0, 80) + '）'; },
+      renderSubLayers: function (p) {
+        if (!p.data) return null;
+        return new deck.SimpleMeshLayer(p, { id: p.id + '-mesh', data: [0], mesh: p.data.mesh, texture: p.data.tex, _instanced: false,
+          getPosition: [0, 0, 0], getColor: [255, 255, 255], opacity: 0.6, material: { ambient: 0.55, diffuse: 0.55, shininess: 0, specularColor: [0, 0, 0] },
+          extensions: [new deck.ClipExtension()], clipBounds: [r.w, r.s, r.e, r.n] });
+      }
     }));
+  }
+  /** 地形のタイル 1 枚：標高の PNG（Terrarium：(R×256＋G＋B/256)−32768 m）を読み、64×64 の格子の面にする。
+   *  面の点は 緯度経度と高さ（m × 強調）。貼る画像は同じ位置の地理院タイル（無ければ地形だけ） */
+  var TN = 64;
+  function terrainTile(ix, exag, texUrl, texMax, signal) {
+    var url = function (u, z) { return u.replace('{z}', z).replace('{x}', ix.x).replace('{y}', ix.y); };
+    var img = function (u) { return fetch(u, { signal: signal, mode: 'cors' }).then(function (res) { if (!res.ok) throw new Error(u + ' HTTP ' + res.status); return res.blob(); }).then(createImageBitmap); };
+    var texP = ix.z <= texMax ? img(url(texUrl, ix.z)).catch(function () { return null; }) : Promise.resolve(null);
+    return Promise.all([img(url(TERRAIN, ix.z)), texP]).then(function (a) {
+      var bm = a[0], cv = document.createElement('canvas'); cv.width = bm.width; cv.height = bm.height;
+      var cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(bm, 0, 0);
+      var px = cx.getImageData(0, 0, bm.width, bm.height).data, W = bm.width, H = bm.height;
+      var n = Math.pow(2, ix.z), pos = new Float32Array(TN * TN * 3), uv = new Float32Array(TN * TN * 2), q = 0;
+      for (var i = 0; i < TN; i++) {
+        var fy = i / (TN - 1), lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * (ix.y + fy) / n))) * 180 / Math.PI;
+        var py = Math.min(H - 1, Math.round(fy * (H - 1)));
+        for (var j = 0; j < TN; j++) {
+          var fx = j / (TN - 1), lon = (ix.x + fx) / n * 360 - 180, pxx = Math.min(W - 1, Math.round(fx * (W - 1))), o = (py * W + pxx) * 4;
+          var h = px[o] * 256 + px[o + 1] + px[o + 2] / 256 - 32768;
+          pos[q * 3] = lon; pos[q * 3 + 1] = lat; pos[q * 3 + 2] = h * exag;
+          uv[q * 2] = fx; uv[q * 2 + 1] = fy; q++;
+        }
+      }
+      var idx = new Uint32Array((TN - 1) * (TN - 1) * 6), k = 0;
+      for (i = 0; i < TN - 1; i++) for (j = 0; j < TN - 1; j++) {
+        var v0 = i * TN + j, v1 = v0 + 1, v2 = v0 + TN, v3 = v2 + 1;
+        idx[k++] = v0; idx[k++] = v2; idx[k++] = v1; idx[k++] = v1; idx[k++] = v2; idx[k++] = v3;
+      }
+      return { mesh: { attributes: { POSITION: { value: pos, size: 3 }, TEXCOORD_0: { value: uv, size: 2 } }, indices: { value: idx, size: 1 } }, tex: a[1] };
+    });
   }
   /** 想定震源域（重ねる図で選んだ海域）：外形と等深線を実際の深さに。選んだ範囲で切り取る。海域・倍率・範囲が同じなら作り直さない */
   function srcLayers3d() {

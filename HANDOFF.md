@@ -5,7 +5,7 @@
 - 公開ページ：https://u1oishi-hallows.github.io/quake-timeline/
 - リポジトリ：https://github.com/u1oishi-hallows/quake-timeline （公開、main に push すると Pages に数分で反映）
 - 手元：`Dropbox/Claude Code/地震可視化`。プレビューは 出張医調整システム/.claude/launch.json の `quake`（python http.server 8741）
-- 最新のコミット：db6acc9（立体表示の試作）
+- 最新のコミット：下の B を参照（2026-10-13）
 
 ## 作業の状態（2026-10-12 深夜）
 
@@ -17,14 +17,15 @@ js/view3d.js、deck.gl 9.3.11 を vendor/ に同梱。地図の「3D」→ 範�
 利用者の「深度情報はいりません」は「地面は平ら（地形・海の深さなし）、平面の断面図・奥行きの効きは使わない」と解釈した（確認待ち）。
 まだ無い：立体での動画書き出し、プレート境界の面。
 
-### B. 日本中の想定震源域 — 調べ終わり、作るのは利用者の返事待ち
-- 符号の一覧：J-SHIS 断層コード規約 PDF（https://www.j-shis.bosai.go.jp/map/JSHIS2/data/DOC/DataFileRule/A-RULES.pdf）表2-2・2-3。
-  今のモデル（Y2024/AVR）で使える符号は fltsearch API（例 `map/api/fltsearch?areacode=A01000&ecode=ALL_NT_A&mode=C&version=Y2024&case=AVR&period=P_T30&format=json`）で確かめた。
-- 点の集まり（深さ・重み付き、南海と同じ加工ができる）：ANNKI 南海、ACHSM 千島海溝 17世紀型、ATKCH 十勝沖、ANMRO 根室沖、AJTHK 日本海溝 東北沖型、AAEIN 青森東方沖・岩手北部、AMYGI 宮城県沖、ASGMI 相模トラフ M8級
-- 矩形の断層面（重みなし）：BCHTN 千島海溝寄り津波地震（点）、BJPTN 日本海溝寄り津波地震、BJOUT 海溝軸外側、BHGNL/BHGNS 日向灘、BYNGN 与那国島周辺、日本海東縁（AHKDW AHKSW AAOMW AYMGA ANIGT BHKNW BAKIT BSDGN）
-- 無い：南西諸島海溝（与那国以外）、茨城・福島・房総沖の単独、元禄型の単独（ASGMI に含む）
-- 元のデータは scratchpad のみ（リポジトリに置かない）。ANNKI は 13MB・取得に 2 分かかる
-- 観測による固着（すべり欠損）の数値格子は公開物が見つからない。プレート境界面の深さなら 岩崎ほか PLMDL_2016（東大地震研）・USGS Slab2 がある
+### B. 日本中の想定震源域 — 済み（2026-10-13）
+research/build_source_areas.py（元の J-SHIS は scratchpad のみ）→ data/overlays/source_areas.json、確かめは research/check_source_areas.py。
+色「想定震源域からの距離」（QC.srcPrepare / srcDistance）。立体表示に地形・海底地形（自前の Terrarium 読み込み）、ドラッグで回転（中心＝画面の中心の真下・箱の深さの真ん中）、凡例などを隠す（H）。
+立体の画面の確かめは、プレビューの窓が隠れていると描かれないので、見えない Chrome（scratchpad/hc/shot.js、CDP で操作して PNG）で撮った。
+
+### 次の候補
+- 距離の計算（1 年分で約 0.5 秒）を別の計算場所へ
+- 日本海溝・日本海東縁部で名前の文字が重なる
+- 立体での動画の書き出し
 
 ## 利用者が決めたこと（変えるときは相談）
 - 取得の頻度：ふだん週1回 土曜11時JST。震度5弱以上で発生から14日間1日1回。震度6弱以上で7日間6時間ごと＋その後14日間1日1回。検知直後はすぐ1回。手動は Actions の Run workflow。
@@ -37,7 +38,7 @@ js/view3d.js、deck.gl 9.3.11 を vendor/ に同梱。地図の「3D」→ 範�
 - 3D の効き（奥行き：小さく・ぼかし・かすみ）は円の表示で既定50%、設定欄は普段は畳む。
 
 ## 守ること（利用者と共有の理念）
-実測してから書く／検査を書いたら壊して落ちるのを確かめる（`python3 tests/mutate.py`、いま93通り全部落ちる）／もっともらしく壊れるのを最優先で潰す
+実測してから書く／検査を書いたら壊して落ちるのを確かめる（`python3 tests/mutate.py`、いま98通り全部落ちる）／もっともらしく壊れるのを最優先で潰す
 （間違った場所・時刻に出さない、不明は不明のまま）／黙って落とさない（件数と理由）／時刻を示す／色は意味に使い凡例を付ける／
 外部データは非公式で変わる・出典を出す／設定はコードに埋めない。説明は平易な日本語で結論から。
 
