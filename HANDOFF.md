@@ -19,7 +19,8 @@ js/view3d.js、deck.gl 9.3.11 を vendor/ に同梱。地図の「3D」→ 範�
 
 ### B. 日本中の想定震源域 — 済み（2026-10-13）
 research/build_source_areas.py（元の J-SHIS は scratchpad のみ）→ data/overlays/source_areas.json、確かめは research/check_source_areas.py。
-色「想定震源域からの距離」（QC.srcPrepare / srcDistance）。立体表示に地形・海底地形（自前の Terrarium 読み込み）、ドラッグで回転（中心＝画面の中心の真下・箱の深さの真ん中）、凡例などを隠す（H）。
+色「想定震源域からの距離」＝M の色の鮮やかさを距離で落とす（QC.srcPrepare / srcDistance / srcFade）。最後の統計に想定震源域ごとの解放エネルギー（QC.srcStats、面から S.srcNearKm 以内）。
+立体表示は OrbitView の模型（下からも見られる。地面は範囲 1 枚の地形の面、中心＝箱の中心）、凡例などを隠す（H）。
 立体の画面の確かめは、プレビューの窓が隠れていると描かれないので、見えない Chrome（scratchpad/hc/shot.js、CDP で操作して PNG）で撮った。
 
 ### 次の候補
@@ -38,7 +39,7 @@ research/build_source_areas.py（元の J-SHIS は scratchpad のみ）→ data/
 - 3D の効き（奥行き：小さく・ぼかし・かすみ）は円の表示で既定50%、設定欄は普段は畳む。
 
 ## 守ること（利用者と共有の理念）
-実測してから書く／検査を書いたら壊して落ちるのを確かめる（`python3 tests/mutate.py`、いま98通り全部落ちる）／もっともらしく壊れるのを最優先で潰す
+実測してから書く／検査を書いたら壊して落ちるのを確かめる（`python3 tests/mutate.py`、いま101通り全部落ちる）／もっともらしく壊れるのを最優先で潰す
 （間違った場所・時刻に出さない、不明は不明のまま）／黙って落とさない（件数と理由）／時刻を示す／色は意味に使い凡例を付ける／
 外部データは非公式で変わる・出典を出す／設定はコードに埋めない。説明は平易な日本語で結論から。
 

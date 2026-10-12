@@ -192,15 +192,22 @@
     var a = [230, 40, 30], b = [150, 150, 160];
     return 'rgb(' + a.map(function (x, k) { return Math.round(x + (b[k] - x) * f); }).join(',') + ')';
   }
-  // 想定震源域からの距離（km、震源から震源域の面までの立体の距離）。近いほど暖色
-  var SRCD_COLORS = [
-    { lo: -Infinity, c: '#d7191c', label: '5km以内' }, { lo: 5, c: '#f46d43', label: '5〜10km' }, { lo: 10, c: '#fdae61', label: '10〜20km' },
-    { lo: 20, c: '#a6d96a', label: '20〜40km' }, { lo: 40, c: '#2c7bb6', label: '40〜80km' }, { lo: 80, c: '#7b6fae', label: '80〜' + 150 + 'km' },
-    { lo: 150, c: '#b0b4bc', label: '150km以上' }];
-  var SRCD_UNKNOWN = { fill: '#ffffff', stroke: '#555555', dash: true, label: '深さ不明' };
+  // 想定震源域からの距離（km、震源から震源域の面までの立体の距離）：色は M のまま、遠いほど鮮やかさを落とす（灰色に近づける）。
+  // 5km 以内は元の色、そこから距離が 2 倍になるごとに 1/4 ずつ落とし、80km 以上（近くに震源域が無いときも）は 9 割落とす
+  var SRCD_STEPS = [5, 10, 20, 40, 80], SRCD_UNKNOWN = { fill: '#ffffff', stroke: '#555555', dash: true, label: '深さ不明' };
+  function srcFade(d) {
+    if (!(d > 5)) return 0;
+    return 0.9 * Math.min(1, Math.log(d / 5) / Math.log(16));
+  }
+  /** '#rrggbb' の鮮やかさを k（0〜1）だけ落とす：明るさ（輝度）の灰色に向けて混ぜ、少し明るくする */
+  function desaturate(hex, k) {
+    var n = parseInt(hex.slice(1), 16), c = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    var g = Math.min(255, 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2] + 40 * k);
+    return 'rgb(' + c.map(function (v) { return Math.round(v + (g - v) * k); }).join(',') + ')';
+  }
   function colorOf(mode, m, dep, ageFrac, maxi, srcd) {
     if (mode === 'depth') return isNaN(dep) ? DEP_UNKNOWN : band(DEP_COLORS, dep);
-    if (mode === 'src') return isNaN(srcd) ? SRCD_UNKNOWN.fill : band(SRCD_COLORS, srcd);
+    if (mode === 'src') return isNaN(srcd) ? SRCD_UNKNOWN.fill : desaturate(band(MAG_COLORS, m), srcFade(srcd));
     if (mode === 'age') return ageColor(ageFrac);
     if (mode === 'maxi') return intensityStyle(maxi).fill;
     return band(MAG_COLORS, m);
@@ -490,6 +497,19 @@
     return best <= SRC_MAX_KM ? best : Infinity;
   }
   function srcLast() { return { group: _srcG, side: _srcSide }; }
+  /** 想定震源域ごとの集計：面から nearKm 以内の地震（いちばん近い海域に数える）の回数・エネルギーの合計（M 相当）・最大の地震。
+   *  D は地震ごとの距離、G はいちばん近い海域の番号（srcDistance と srcLast で求めたもの）。回数 0 の海域は返さない。エネルギーの大きい順 */
+  function srcStats(ev, idx, D, G, nearKm) {
+    var by = {};
+    for (var k = 0; k < idx.length; k++) {
+      var i = idx[k];
+      if (!(D[i] <= nearKm) || G[i] < 0) continue;
+      var g = by[G[i]] || (by[G[i]] = { group: G[i], n: 0, E: 0, max: -1 });
+      g.n++; g.E += energyJ(ev.mag[i]);
+      if (g.max < 0 || ev.mag[i] > ev.mag[g.max]) g.max = i;
+    }
+    return Object.keys(by).map(function (key) { var g = by[key]; g.meq = magOfEnergy(g.E); return g; }).sort(function (a, b) { return b.E - a.E; });
+  }
 
   // ---------------------------------------------------------------- k-means の一式（画面とは別の計算場所 js/kmworker.js でも同じものを使う）
   /** 中心を求め（多いときは等間隔に間引いた点で）、全部の点を割り当て、再生用の累積を作る。
@@ -660,7 +680,7 @@
     DEP_COLORS: DEP_COLORS, DEP_UNKNOWN: DEP_UNKNOWN, INT_STYLES: INT_STYLES, INT_UNKNOWN: INT_UNKNOWN,
     intensityStyle: intensityStyle, colorOf: colorOf, styleOf: styleOf, ageColor: ageColor, alphas: alphas,
     visibleAt: visibleAt, depthLook: depthLook, energyJ: energyJ, magOfEnergy: magOfEnergy, formatEnergy: formatEnergy,
-    SRCD_COLORS: SRCD_COLORS, SRCD_UNKNOWN: SRCD_UNKNOWN, SRC_MAX_KM: SRC_MAX_KM, srcPrepare: srcPrepare, srcDistance: srcDistance, srcLast: srcLast,
+    SRCD_STEPS: SRCD_STEPS, SRCD_UNKNOWN: SRCD_UNKNOWN, srcFade: srcFade, desaturate: desaturate, srcStats: srcStats, SRC_MAX_KM: SRC_MAX_KM, srcPrepare: srcPrepare, srcDistance: srcDistance, srcLast: srcLast,
     rng: rng, kmeans: kmeans, kmeansClusters: kmeansClusters, kmFit: kmFit, kmAt: kmAt, kmActiveMedian: kmActiveMedian, kmSolve: kmSolve, kmPoints: kmPoints, kmInitialK: kmInitialK, KM_MAX: KM_MAX, aggregate: aggregate, aggState: aggState, aggAdd: aggAdd, aggFinish: aggFinish, aggRadius: aggRadius, kOfLevel: kOfLevel, idxRange: idxRange, computeStats: computeStats, rotScreen: rotScreen, rotDelta: rotDelta,
     screenXAzimuth: screenXAzimuth, dirName: dirName, depthTicks: depthTicks, project0: project0, estIntensity: estIntensity, INT_THRESHOLDS: INT_THRESHOLDS,
     RING_LEVELS: RING_LEVELS, ringRadiiKm: ringRadiiKm, sphereRadiusKm: sphereRadiusKm, geomSphereRadiusKm: geomSphereRadiusKm, surfaceRadiusKm: surfaceRadiusKm, pxPerKm: pxPerKm, dailyCounts: dailyCounts, timeTicks: timeTicks

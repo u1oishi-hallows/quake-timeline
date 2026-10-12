@@ -456,11 +456,24 @@ t('想定震源域からの距離：震源から面（升ごとの深さの幅�
   assert.strictEqual(QC.srcDistance(p, 130, 30, 5), 0);
   assert.strictEqual(QC.srcLast().group, 1);
   assert.strictEqual(QC.srcDistance(QC.srcPrepare(data, ['a']), 130, 30, 5), Infinity);   // 海域 a だけ
-  // 色：近いほど暖色、深さ不明は白の点線
-  assert.strictEqual(QC.colorOf('src', 3, 10, 0, 0, 4.9), QC.SRCD_COLORS[0].c);
-  assert.strictEqual(QC.colorOf('src', 3, 10, 0, 0, 5), QC.SRCD_COLORS[1].c);
-  assert.strictEqual(QC.colorOf('src', 3, 10, 0, 0, Infinity), QC.SRCD_COLORS[6].c);
+  // 色：M の色のまま、遠いほど鮮やかさを落とす。5km 以内は元の色、80km 以上・震源域が無いときは 9 割、深さ不明は白の点線
+  assert.strictEqual(QC.srcFade(4.9), 0);
+  assert.strictEqual(QC.srcFade(5), 0);
+  assert.ok(Math.abs(QC.srcFade(10) - 0.225) < 1e-9 && Math.abs(QC.srcFade(20) - 0.45) < 1e-9);
+  assert.strictEqual(QC.srcFade(80), 0.9);
+  assert.strictEqual(QC.srcFade(Infinity), 0.9);
+  assert.strictEqual(QC.desaturate('#ff0000', 0), 'rgb(255,0,0)');
+  assert.strictEqual(QC.desaturate('#ff0000', 1), 'rgb(116,116,116)');    // 輝度 76＋40
+  assert.strictEqual(QC.colorOf('src', 3, 10, 0, 0, 4.9), QC.desaturate(QC.colorOf('mag', 3, 0, 0), 0));
+  assert.strictEqual(QC.colorOf('src', 6, 10, 0, 0, 40), QC.desaturate(QC.colorOf('mag', 6, 0, 0), QC.srcFade(40)));
+  assert.notStrictEqual(QC.colorOf('src', 6, 10, 0, 0, 40), QC.colorOf('src', 6, 10, 0, 0, 10));
   assert.deepStrictEqual(QC.styleOf('src', 3, NaN, 0, 0, NaN), { fill: '#ffffff', stroke: '#555555', dash: true });
+  // 想定震源域ごとの集計：面から 10km 以内（ちょうど 10km を含む）だけ、いちばん近い海域に。エネルギーの大きい順、回数 0 の海域は出さない
+  var ev3 = { mag: [5, 6, 4, 7, 3] }, Dd = [2, 10, 10.1, Infinity, 0], Gg = [0, 0, 0, -1, 2];
+  var ss = QC.srcStats(ev3, [0, 1, 2, 3, 4], Dd, Gg, 10);
+  assert.deepStrictEqual(ss.map(function (g) { return [g.group, g.n, g.max]; }), [[0, 2, 1], [2, 1, 4]]);
+  assert.ok(Math.abs(ss[0].meq - QC.magOfEnergy(QC.energyJ(5) + QC.energyJ(6))) < 1e-9);
+  assert.deepStrictEqual(QC.srcStats(ev3, [2, 3], Dd, Gg, 10), []);
 });
 t('時間の幅で切り出す：開始は含まず、終わり（T）は含む', function () {
   var ev = evOf(['2024-01-01T00:00:00.0,35,135,10,2,,P,,', '2024-01-02T00:00:00.0,35,135,10,2,,P,,',

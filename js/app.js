@@ -16,7 +16,7 @@
     { t: '2016-04-01', label: '自動処理の震源が加わる', note: '2016年4月から自動処理で決めた震源が加わり、主に M1 未満の回数が増えています。年をまたいで回数を比べるなら M2 以上が目安です。' }];
 
   var DEFAULTS = {
-    srcShow: '',
+    srcShow: '', srcNearKm: 10,
     magMin: 1, intMin: 0, depMin: 0, depMax: 1000, lowFreq: true, reference: true, lfeOnly: false,
     colorMode: 'mag', sizeScale: 'exp', r1: 1.5, sizeGrowth: 1.7,
     life1: 3, lifeGrowth: 1.8, lifeMin: 1 / 24, lifeMax: 120,
@@ -33,7 +33,7 @@
   };
   var NUM = ['magMin', 'intMin', 'depMin', 'depMax', 'r1', 'sizeGrowth', 'life1', 'lifeGrowth', 'lifeMax',
              'rippleMinM', 'step', 'fps', 'sphereAmp', 'sphereFade', 'sphereR5', 'sphereGrowth', 'ringMinM',
-             'vol', 'viewH', 'dBlur', 'dHaze', 'hazeMin', 'keepBigM', 'bearing', 'aggLevel', 'kmDepthW', 'kmKmPerDay', 'aggCell', 'aggRatio', 'endSumSec', 'endStatsSec'];
+             'vol', 'viewH', 'dBlur', 'dHaze', 'hazeMin', 'keepBigM', 'bearing', 'aggLevel', 'kmDepthW', 'kmKmPerDay', 'aggCell', 'aggRatio', 'endSumSec', 'endStatsSec', 'srcNearKm'];
   var BOOL = ['lowFreq', 'lfeOnly', 'reference', 'ripple', 'dShrink', 'keepBig', 'showXsec', 'showMt', 'chartView', 'endSeq'];
   var STR = ['colorMode', 'sizeScale', 'base', 't0', 't1', 'shape', 'sphereInt', 'sphereKind', 'ringFrom', 'xsDepth', 'mode', 'aggLabel', 'aggWindow', 'xsSize', 'aggMethod', 'srcShow'];
 
@@ -232,8 +232,8 @@
   }
   /** 想定震源域からの距離（色を「想定震源域からの距離」にしたとき）。地震ごとに 1 回だけ求め、絞り込み・海域が変わったら作り直す。
    *  海域は「重ねる図」で選んだもの（選んでいなければ全部） */
-  function ensureSrcD() {
-    if (S.colorMode !== 'src' || !st.f) return true;
+  function ensureSrcD(force) {
+    if ((S.colorMode !== 'src' && !force) || !st.f) return true;
     var key = [st.fVer, srcIds().join(',')].join('|');
     if (st.srcKey === key && st.srcD && st.srcEv === st.ev) return true;
     if (!st.srcData) { loadSrc().then(function () { drawAll(); renderChartBases(); drawCharts(); renderLegend(); }).catch(function () {}); return false; }
@@ -718,8 +718,14 @@
 
   // ---------------------------------------------------------------- 最後のまとめ（再生・動画）
   function getStats() {
-    var key = st.fVer + '|' + (S.chartView && st.viewIdx ? st.viewIdx.length + ':' + st.viewIdx[0] : 'all');
-    if (!st.stats || st.stats.key !== key) st.stats = { key: key, v: QC.computeStats(st.ev, chartIdx(), st.t0, st.t1) };
+    var key = st.fVer + '|' + (S.chartView && st.viewIdx ? st.viewIdx.length + ':' + st.viewIdx[0] : 'all') + '|' + S.srcShow + '|' + S.srcNearKm;
+    if (!st.stats || st.stats.key !== key || (!st.stats.v.srcAreas && st.srcData)) {
+      var v = QC.computeStats(st.ev, chartIdx(), st.t0, st.t1);
+      // 想定震源域ごとの解放エネルギー（面から srcNearKm 以内の地震）。図形を読んでいなければ読み始め、読めたら次に描くときに入る
+      if (st.srcData && ensureSrcD(true) && st.srcD) v.srcAreas = QC.srcStats(st.ev, chartIdx(), st.srcD, st.srcG, S.srcNearKm);
+      else loadSrc().catch(function () {});
+      st.stats = { key: key, v: v };
+    }
     return st.stats.v;
   }
   /** 画面のまとめの段階：{ statsAlpha }（集合マーカーだけの間は 0） */
@@ -809,8 +815,29 @@
       ctx.fillStyle = '#fff'; ctx.fillText(fmtInt(c), bx + 4.6 * u + len + 0.5 * u, yy + bh / 2);
       ctx.textBaseline = 'top';
     });
+    // 想定震源域ごとの解放エネルギー：面から srcNearKm km 以内の地震の合計（M 相当、大きい順）。棒の長さは M 相当（エネルギーの対数）
+    if (s.srcAreas) {
+      // 置き場所：表の下（横長の画面では左の列、縦長では M ごとの棒グラフの下）
+      var sx = pad, sw = tableW, sy = wide ? y + 0.6 * u : by + 1.8 * u + bars.length * (bh + 0.45 * u) + 1.2 * u;
+      var room = Math.max(0, Math.floor((H - pad - 3.2 * u - sy - 1.8 * u) / (bh + 0.45 * u))), list = s.srcAreas.slice(0, room), names = st.srcData.groups;
+      ctx.globalAlpha = alpha; ctx.font = 'bold ' + 1.0 * u + 'px sans-serif'; ctx.fillStyle = '#fff';
+      ctx.fillText('想定震源域ごとの解放エネルギー（面から' + S.srcNearKm + 'km以内の地震）', sx, sy);
+      if (!s.srcAreas.length) { ctx.font = 0.95 * u + 'px sans-serif'; ctx.fillText('該当する地震なし', sx, sy + 1.8 * u); }
+      ctx.font = 0.95 * u + 'px sans-serif';
+      var nameW = 7 * u, textW = ctx.measureText('M8.8相当・88,888回・最大M8.8').width + 0.8 * u, barMax = Math.max(4 * u, sw - nameW - textW), m0 = 3, m1 = Math.max(8, Math.ceil(s.srcAreas.length ? s.srcAreas[0].meq : 8));
+      list.forEach(function (g, n) {
+        var yy = sy + 1.8 * u + n * (bh + 0.45 * u), len = Math.max(2, barMax * Math.max(0, g.meq - m0) / (m1 - m0));
+        ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
+        ctx.fillText(names[g.group].name, sx, yy + bh / 2);
+        ctx.fillStyle = QC.colorOf('mag', g.meq, 0, 0); ctx.fillRect(sx + nameW, yy, len, bh);
+        ctx.fillStyle = '#fff'; ctx.fillText('M' + g.meq.toFixed(1) + '相当・' + fmtInt(g.n) + '回・最大M' + ev.mag[g.max].toFixed(1), sx + nameW + len + 0.5 * u, yy + bh / 2);
+        ctx.textBaseline = 'top';
+      });
+      if (list.length < s.srcAreas.length) { ctx.font = 0.8 * u + 'px sans-serif'; ctx.fillText('ほか ' + (s.srcAreas.length - list.length) + ' 海域', sx, sy + 1.8 * u + list.length * (bh + 0.45 * u)); }
+    }
     ctx.globalAlpha = 0.7 * alpha; ctx.font = 0.75 * u + 'px sans-serif'; ctx.fillStyle = '#fff';
-    ctx.fillText('出典：気象庁（震源データ・震源リスト・震度データベース）。エネルギーは log E = 1.5M + 4.8（J）による推定。', pad, H - pad * 0.6 - 0.9 * u);
+    ctx.fillText('出典：気象庁（震源データ・震源リスト・震度データベース）。エネルギーは log E = 1.5M + 4.8（J）による推定。', pad, H - pad * 0.6 - (s.srcAreas ? 1.9 : 0.9) * u, W - 2 * pad);
+    if (s.srcAreas) ctx.fillText('想定震源域ごと＝震源から震源域の面まで' + S.srcNearKm + 'km以内の地震を、いちばん近い海域に。震源域は長期評価のモデル（J-SHIS を加工）', pad, H - pad * 0.6 - 0.9 * u, W - 2 * pad);
     ctx.restore();
   }
   /** 地震を描く（画面と動画で共通）。描いたものの位置を返す（吹き出し用）。 */
@@ -1009,8 +1036,9 @@
   function legendItems() {
     if (sumView() || S.mode === 'timeAgg') return { title: 'エネルギーの合計（M相当）', items: QC.MAG_COLORS.filter(function (b) { return b.lo >= 2; })
       .map(function (b) { return { c: b.c, label: b.label.replace('以上', '') + '相当' + (b.label.indexOf('以上') >= 0 ? '以上' : ''), m: b.lo }; }) };
-    if (S.colorMode === 'src') return { title: '想定震源域からの距離', items: QC.SRCD_COLORS.map(function (b) { return { c: b.c, label: b.label }; })
-      .concat([{ c: QC.SRCD_UNKNOWN.fill, stroke: QC.SRCD_UNKNOWN.stroke, dash: true, label: QC.SRCD_UNKNOWN.label }]) };
+    if (S.colorMode === 'src') return { title: '色＝M・鮮やかさ＝想定震源域への近さ', items: QC.MAG_COLORS.filter(function (b) { return b.lo === -Infinity ? S.magMin < 1 : true; })
+      .map(function (b) { return { c: b.c, label: b.label, m: b.lo === -Infinity ? 0.5 : b.lo }; })
+      .concat([{ c: QC.SRCD_UNKNOWN.fill, stroke: QC.SRCD_UNKNOWN.stroke, dash: true, label: '深さ不明' }]) };
     if (S.colorMode === 'depth') return { title: '深さ', items: QC.DEP_COLORS.map(function (b) { return { c: b.c, label: b.label }; }) };
     if (S.colorMode === 'maxi') return { title: '最大震度', items: QC.INT_STYLES.concat([QC.INT_UNKNOWN]).map(function (s) {
       return { c: s.fill, stroke: s.stroke, dash: s.dash, label: s.label }; }) };
@@ -1045,8 +1073,16 @@
       '<text x="64" y="52" font-size="10" fill="#333">点＝震央</text></svg>' +
       '<div class="note" style="color:#333;max-width:150px">' + sphereNote() + '</div>';
     else if (S.colorMode !== 'mag' && S.shape === 'circle') h += '<div class="note" style="color:#333">円の大きさ＝M</div>';
-    if (S.colorMode === 'src') h += '<div class="note" style="color:#333;max-width:150px">震源から想定震源域の面（プレート境界・断層面）までの立体の距離。対象：' +
-      (srcNames() || '読み込み中') + (srcIds().length ? '（重ねる図で選んだ海域）' : '（全部の海域）') + '</div>';
+    if (S.colorMode === 'src') {
+      // 鮮やかさの見本（M4 の色で）：面から 5km 以内は元の色、遠いほど灰色に
+      h += '<div class="ttl" style="margin-top:4px">想定震源域の面からの距離</div><div style="display:flex;flex-wrap:wrap;gap:2px 6px;max-width:150px">';
+      [[3, '5km以内'], [10, '10km'], [20, '20km'], [40, '40km'], [80, '80km以上']].forEach(function (x) {
+        h += '<span style="display:inline-flex;align-items:center;gap:2px"><span class="sw" style="width:10px;height:10px;background:' +
+          QC.desaturate(QC.colorOf('mag', 4, 0, 0), QC.srcFade(x[0])) + ';border-color:#888"></span>' + x[1] + '</span>';
+      });
+      h += '</div><div class="note" style="color:#333;max-width:150px">震源から想定震源域の面（プレート境界・断層面）までの立体の距離。対象：' +
+        (srcNames() || '読み込み中') + (srcIds().length ? '（重ねる図で選んだ海域）' : '（全部の海域）') + '</div>';
+    }
     if (S.shape === 'circle' && S.vol > 0 && !st.v3d) h += '<div class="note" style="color:#333;max-width:150px">' + depthNote() + '</div>';   // 立体表示では奥行きの効きは使わない
     $('legend').innerHTML = h + srcLegendHtml();
   }
@@ -1591,7 +1627,7 @@
   window.__app = { S: S, st: st, setT: setT, boot: boot, drawFrame: drawFrame, QC: QC, getMap: function () { return map; },
     snapshotTiles: snapshotTiles, buildMtBase: buildMtBase, startRecording: startRecording,
     // 立体表示（js/view3d.js）から使う
-    kmJobOf: kmJobOf, sumView: sumView, srcd: srcd, srcTip: srcTip, srcIds: srcIds, loadSrc: loadSrc, redraw: function () { layoutRot(); drawAll(); },
+    getStats: getStats, startEnding: startEnding, kmJobOf: kmJobOf, sumView: sumView, srcd: srcd, srcTip: srcTip, srcIds: srcIds, loadSrc: loadSrc, redraw: function () { layoutRot(); drawAll(); },
     refreshCharts: function () { computeViewIdx(); renderChartBases(); drawCharts(); renderLegend(); } };
   boot();
 })();
