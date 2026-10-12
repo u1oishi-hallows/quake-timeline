@@ -113,12 +113,16 @@
   function filterEvents(ev, s, t0, t1) {
     var i0 = lowerBound(ev.t, t0), i1 = lowerBound(ev.t, t1);
     var idx = [], why = { magUnknown: 0, magLow: 0, intUnknown: 0, intLow: 0, outside: 0,
-                          poorQuality: 0, artificial: 0, lowFreq: 0, depth: 0 };
+                          poorQuality: 0, artificial: 0, lowFreq: 0, depth: 0, notLfe: 0, lfeUnknown: 0 };
     for (var i = i0; i < i1; i++) {
       var la = ev.lat[i], lo = ev.lon[i];
       if (la < s.bbox[0] || la > s.bbox[2] || lo < s.bbox[1] || lo > s.bbox[3]) { why.outside++; continue; }
       if (ev.aux[i] === 3) { why.artificial++; continue; }
-      if (ev.aux[i] === 5 && !s.lowFreq) { why.lowFreq++; continue; }
+      if (s.lfeOnly) {   // 低周波地震だけ：印があるのは確定版だけ。速報などは区別できないので描かない（数える）
+        if (ev.src[i] !== 0) { why.lfeUnknown++; continue; }
+        if (ev.aux[i] !== 5) { why.notLfe++; continue; }
+      }
+      if (ev.aux[i] === 5 && !s.lowFreq && !s.lfeOnly) { why.lowFreq++; continue; }
       if (ev.q[i] === 'N' || (!s.reference && /^[Ssa]$/.test(ev.q[i]))) { why.poorQuality++; continue; }
       var m = ev.mag[i];
       if (isNaN(m)) { why.magUnknown++; continue; }

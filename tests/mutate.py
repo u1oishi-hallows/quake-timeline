@@ -90,6 +90,8 @@ MUTANTS = [
     ('js/core.js', "for (var j = 0; j < D; j++) { var e = P[i * D + j] - C[c * D + j]; d += e * e; }", "for (var j = 0; j < 2; j++) { var e = P[i * D + j] - C[c * D + j]; d += e * e; }", 'k-means：深さ・時間を距離に入れない'),
     ('js/core.js', "s.aggMin * Math.pow(s.aggRatio, meq - s.aggBase)", "s.aggMin + (meq - s.aggBase) * s.aggRatio", 'マーカーの大きさを倍でなく足し算に'),
     ('js/core.js', "return Math.round(10 * Math.pow(10, (L - 1) / 9));", "return Math.round(10 * Math.pow(10, (L - 1) / 10));", 'マーカーの数の段階の倍率'),
+    ('js/core.js', "if (ev.src[i] !== 0) { why.lfeUnknown++; continue; }", "", '低周波だけ：速報を区別できないのに描く'),
+    ('js/core.js', "if (ev.aux[i] !== 5) { why.notLfe++; continue; }", "if (ev.aux[i] !== 5) { continue; }", '低周波だけ：除いた数を数えない'),
     ('js/core.js', "return r5 * Math.pow(growth, mw - 5);", "return r5 * Math.pow(growth, mw - 4);", '図式の球の大きさ'),
     ('js/core.js', "- 0.002 * xKm;", "- 0.0002 * xKm;", '球：減衰式の係数'),
     ('js/core.js', "return 2.68 + 1.72 * (lp + log10(amp));", "return 2.68 + 1.72 * lp;", '球：地盤の増幅を無視'),

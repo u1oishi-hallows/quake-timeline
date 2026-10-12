@@ -91,10 +91,26 @@ t('絞り込み：理由ごとに数え、合計が合う', function () {
   Object.keys(w).forEach(function (k) { sum += w[k]; });
   assert.strictEqual(sum + f.idx.length, f.total);
   assert.deepStrictEqual(w, { magUnknown: 1, magLow: 1, intUnknown: 0, intLow: 0, outside: 1,
-                              poorQuality: 2, artificial: 1, lowFreq: 1, depth: 1 });
+                              poorQuality: 2, artificial: 1, lowFreq: 1, depth: 1, notLfe: 0, lfeUnknown: 0 });
   var f2 = QC.filterEvents(ev, Object.assign({}, S, { lowFreq: true, reference: true }), -Infinity, Infinity);
   assert.strictEqual(f2.idx.length, 4);
   assert.strictEqual(f2.why.poorQuality, 1);    // N は常に除く
+});
+t('絞り込み：低周波地震だけ（確定版の印のあるものだけ。速報は区別できないと数える）', function () {
+  var ev = evOf([
+    '2023-01-01T00:00:01.0,34,134,30,0.5,,C,A,5',    // 低周波（確定）
+    '2023-01-01T00:00:02.0,34,134,30,0.5,,C,A,1',    // ふつう（確定）
+    '2023-01-01T00:00:04.0,34,134,30,-0.5,,C,A,5',   // 低周波だが M の下限未満
+    '2024-01-01T00:00:03.0,34,134,30,0.5,,P,,'       // 速報（区別できない）
+  ]);
+  var f = QC.filterEvents(ev, Object.assign({}, S, { lfeOnly: true, magMin: 0 }), -Infinity, Infinity);
+  assert.strictEqual(f.idx.length, 1);
+  assert.strictEqual(ev.aux[f.idx[0]], 5);
+  assert.strictEqual(f.why.notLfe, 1);
+  assert.strictEqual(f.why.lfeUnknown, 1);
+  assert.strictEqual(f.why.magLow, 1);
+  var g = QC.filterEvents(ev, Object.assign({}, S, { lfeOnly: true, lowFreq: false, magMin: -1 }), -Infinity, Infinity);
+  assert.strictEqual(g.idx.length, 2);                           // 「低周波を含めない」よりも「低周波だけ」が優先
 });
 t('絞り込み：震度の下限と不明', function () {
   var ev = evOf(['2024-01-01T00:00:01.0,35,135,10,3,3,P,,', '2024-01-01T00:00:02.0,35,135,10,3,1,P,,',
