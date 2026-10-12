@@ -718,15 +718,44 @@
 
   // ---------------------------------------------------------------- 最後のまとめ（再生・動画）
   function getStats() {
-    var key = st.fVer + '|' + (S.chartView && st.viewIdx ? st.viewIdx.length + ':' + st.viewIdx[0] : 'all') + '|' + S.srcShow + '|' + S.srcNearKm;
+    var key = st.fVer + '|' + (S.chartView && st.viewIdx ? st.viewIdx.length + ':' + st.viewIdx[0] + ':' + st.viewVer + ':' + !!st.v3d : 'all') + '|' + S.srcShow + '|' + S.srcNearKm;
     if (!st.stats || st.stats.key !== key || (!st.stats.v.srcAreas && st.srcData)) {
       var v = QC.computeStats(st.ev, chartIdx(), st.t0, st.t1);
       // 想定震源域ごとの解放エネルギー（面から srcNearKm 以内の地震）。図形を読んでいなければ読み始め、読めたら次に描くときに入る
-      if (st.srcData && ensureSrcD(true) && st.srcD) v.srcAreas = QC.srcStats(st.ev, chartIdx(), st.srcD, st.srcG, S.srcNearKm);
+      if (st.srcData && ensureSrcD(true) && st.srcD) v.srcAreas = srcAreaRows(QC.srcStats(st.ev, chartIdx(), st.srcD, st.srcG, S.srcNearKm));
       else loadSrc().catch(function () {});
       st.stats = { key: key, v: v };
     }
     return st.stats.v;
+  }
+  /** 想定震源域ごとの行：対象の海域を全部（地震が無い海域も 0 として）。広さ（km²）と 1 万 km² あたりの回数・エネルギーも。エネルギーの大きい順 */
+  function srcAreaRows(found) {
+    var ids = srcIds(), by = {};
+    found.forEach(function (g) { by[g.group] = g; });
+    return st.srcData.groups.map(function (grp, k) {
+      if (ids.length && ids.indexOf(grp.id) < 0) return null;
+      var g = by[k] || { group: k, n: 0, E: 0, max: -1, meq: NaN }, area = grp.areaKm2 || (grp.areaKm2 = QC.srcAreaKm2(grp));
+      return { group: k, name: grp.name, n: g.n, E: g.E, meq: g.meq, max: g.max, area: area, nPer: g.n / area * 1e4, meqPer: g.E ? QC.magOfEnergy(g.E / area * 1e4) : NaN,
+               seen: srcSeen(grp) };
+    }).filter(Boolean).sort(function (a, b) { return b.E - a.E; });
+  }
+  /** 集計の対象の範囲（下のグラフを「地図に見えている範囲」にしているとき）に、その海域の震源域がどれだけ入っているか（升の割合 0〜1）。
+   *  全域を対象にしているときは 1。0 なら回数 0 は「地図の外」、1 未満なら「一部が地図の外」と書く（0 回を、地震が無かったと読ませない） */
+  function srcSeen(grp) {
+    if (!S.chartView) return 1;
+    var b;
+    if (st.v3d && window.V3 && V3._V.roi) { var r = V3._V.roi; b = { s: r.s, n: r.n, w: r.w, e: r.e }; }
+    else if (map) { var lb = map.getBounds(); b = { s: lb.getSouth(), n: lb.getNorth(), w: lb.getWest(), e: lb.getEast() }; }
+    else return 1;
+    var gr = grp.grid, n = 0, tot = 0, inn = 0;
+    for (var q = 0; q < gr.z.length; q++) {
+      var v = gr.z[q];
+      if (v < 0) { n -= v; continue; }
+      var lon = gr.lon0 + (n % gr.nx) * gr.step, lat = gr.lat0 + Math.floor(n / gr.nx) * gr.step;
+      tot++; if (lat >= b.s && lat <= b.n && lon >= b.w && lon <= b.e) inn++;
+      n++;
+    }
+    return tot ? inn / tot : 1;
   }
   /** 画面のまとめの段階：{ statsAlpha }（集合マーカーだけの間は 0） */
   function endPhase() {
@@ -815,29 +844,41 @@
       ctx.fillStyle = '#fff'; ctx.fillText(fmtInt(c), bx + 4.6 * u + len + 0.5 * u, yy + bh / 2);
       ctx.textBaseline = 'top';
     });
-    // 想定震源域ごとの解放エネルギー：面から srcNearKm km 以内の地震の合計（M 相当、大きい順）。棒の長さは M 相当（エネルギーの対数）
+    // 想定震源域ごと：面から srcNearKm km 以内の地震の合計と、1 万 km² あたり。対象の海域は全部出す（入りきらなければ行を詰め、字を小さくする）。
+    // 置き場所は表と棒グラフの下、横幅いっぱい。棒の長さは合計の M 相当
     if (s.srcAreas) {
-      // 置き場所：表の下（横長の画面では左の列、縦長では M ごとの棒グラフの下）
-      var sx = pad, sw = tableW, sy = wide ? y + 0.6 * u : by + 1.8 * u + bars.length * (bh + 0.45 * u) + 1.2 * u;
-      var room = Math.max(0, Math.floor((H - pad - 3.2 * u - sy - 1.8 * u) / (bh + 0.45 * u))), list = s.srcAreas.slice(0, room), names = st.srcData.groups;
-      ctx.globalAlpha = alpha; ctx.font = 'bold ' + 1.0 * u + 'px sans-serif'; ctx.fillStyle = '#fff';
-      ctx.fillText('想定震源域ごとの解放エネルギー（面から' + S.srcNearKm + 'km以内の地震）', sx, sy);
-      if (!s.srcAreas.length) { ctx.font = 0.95 * u + 'px sans-serif'; ctx.fillText('該当する地震なし', sx, sy + 1.8 * u); }
-      ctx.font = 0.95 * u + 'px sans-serif';
-      var nameW = 7 * u, textW = ctx.measureText('M8.8相当・88,888回・最大M8.8').width + 0.8 * u, barMax = Math.max(4 * u, sw - nameW - textW), m0 = 3, m1 = Math.max(8, Math.ceil(s.srcAreas.length ? s.srcAreas[0].meq : 8));
+      var list = s.srcAreas, sx = pad, sw = W - 2 * pad;
+      var sy = Math.max(y, wide ? by + 1.8 * u + bars.length * (bh + 0.45 * u) : 0) + 0.7 * u;
+      var avail = H - pad - 2.4 * u - sy - 2.6 * u, rh = Math.min(bh + 0.45 * u, avail / Math.max(list.length, 1)), fs = Math.max(0.6 * u, Math.min(0.95 * u, rh * 0.62));
+      ctx.globalAlpha = alpha; ctx.font = 'bold ' + 1.0 * u + 'px sans-serif'; ctx.fillStyle = '#fff'; ctx.textBaseline = 'top';
+      ctx.fillText('想定震源域ごと（面から' + S.srcNearKm + 'km以内の地震）', sx, sy);
+      ctx.font = fs + 'px sans-serif';
+      var nameW = ctx.measureText('日本海東縁部　').width, tw1 = ctx.measureText('M8.8相当・888,888回・最大M8.8　').width;
+      var tw2 = ctx.measureText('—（一部が地図の外）　').width, tw3 = ctx.measureText('（広さ 88.8万km²・一部が地図の外）').width;
+      var barMax = Math.max(2 * u, Math.min(sw * 0.3, sw - nameW - tw1 - tw2 - tw3)), m0 = 3, m1 = Math.max(8, Math.ceil(isNaN(list[0] && list[0].meq) ? 8 : list[0].meq));
+      var hy = sy + 1.5 * u;
+      ctx.globalAlpha = 0.7 * alpha; ctx.font = 0.75 * u + 'px sans-serif';
+      ctx.fillText('合計', sx + nameW + barMax + 0.5 * u, hy); ctx.fillText('1万km²あたり', sx + nameW + barMax + 0.5 * u + tw1, hy);
+      ctx.globalAlpha = alpha;
       list.forEach(function (g, n) {
-        var yy = sy + 1.8 * u + n * (bh + 0.45 * u), len = Math.max(2, barMax * Math.max(0, g.meq - m0) / (m1 - m0));
-        ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
-        ctx.fillText(names[g.group].name, sx, yy + bh / 2);
-        ctx.fillStyle = QC.colorOf('mag', g.meq, 0, 0); ctx.fillRect(sx + nameW, yy, len, bh);
-        ctx.fillStyle = '#fff'; ctx.fillText('M' + g.meq.toFixed(1) + '相当・' + fmtInt(g.n) + '回・最大M' + ev.mag[g.max].toFixed(1), sx + nameW + len + 0.5 * u, yy + bh / 2);
-        ctx.textBaseline = 'top';
+        var yy = hy + 1.1 * u + n * rh, bhh = Math.max(4, rh - 0.4 * u), len = g.n ? Math.max(2, barMax * Math.max(0, g.meq - m0) / (m1 - m0)) : 0;
+        ctx.textBaseline = 'middle'; ctx.font = fs + 'px sans-serif'; ctx.fillStyle = '#fff';
+        ctx.fillText(g.name, sx, yy + bhh / 2);
+        if (len) { ctx.fillStyle = QC.colorOf('mag', g.meq, 0, 0); ctx.fillRect(sx + nameW, yy, len, bhh); }
+        ctx.fillStyle = '#fff';
+        var tx = sx + nameW + barMax + 0.5 * u;
+        var none = g.seen <= 0 ? '地図の外（数えていない）' : '0回';
+        ctx.fillText(g.n ? 'M' + g.meq.toFixed(1) + '相当・' + fmtInt(g.n) + '回・最大M' + ev.mag[g.max].toFixed(1) : none, tx, yy + bhh / 2);
+        // 一部が地図の外の海域は、広さで割ると小さく出るので割らない
+        ctx.fillText(!g.n ? (g.seen <= 0 ? '—' : '0回') : g.seen < 0.999 ? '—（一部が地図の外）' : (g.nPer >= 10 ? fmtInt(Math.round(g.nPer)) : g.nPer.toFixed(1)) + '回・M' + g.meqPer.toFixed(1) + '相当', tx + tw1, yy + bhh / 2);
+        ctx.globalAlpha = 0.65 * alpha;
+        ctx.fillText('（広さ ' + (g.area / 1e4).toFixed(1) + '万km²' + (g.seen <= 0 ? '・地図の外' : g.seen < 0.999 ? '・一部が地図の外' : '') + '）', tx + tw1 + tw2, yy + bhh / 2);
+        ctx.globalAlpha = alpha; ctx.textBaseline = 'top';
       });
-      if (list.length < s.srcAreas.length) { ctx.font = 0.8 * u + 'px sans-serif'; ctx.fillText('ほか ' + (s.srcAreas.length - list.length) + ' 海域', sx, sy + 1.8 * u + list.length * (bh + 0.45 * u)); }
     }
     ctx.globalAlpha = 0.7 * alpha; ctx.font = 0.75 * u + 'px sans-serif'; ctx.fillStyle = '#fff';
     ctx.fillText('出典：気象庁（震源データ・震源リスト・震度データベース）。エネルギーは log E = 1.5M + 4.8（J）による推定。', pad, H - pad * 0.6 - (s.srcAreas ? 1.9 : 0.9) * u, W - 2 * pad);
-    if (s.srcAreas) ctx.fillText('想定震源域ごと＝震源から震源域の面まで' + S.srcNearKm + 'km以内の地震を、いちばん近い海域に。震源域は長期評価のモデル（J-SHIS を加工）', pad, H - pad * 0.6 - 0.9 * u, W - 2 * pad);
+    if (s.srcAreas) ctx.fillText('想定震源域ごと＝震源から震源域の面まで' + S.srcNearKm + 'km以内の地震を、いちばん近い海域に。広さは震源域の地図の上の面積。1万km²あたり＝期間の合計を広さで割った値。震源域は長期評価のモデル（J-SHIS を加工）', pad, H - pad * 0.6 - 0.9 * u, W - 2 * pad);
     ctx.restore();
   }
   /** 地震を描く（画面と動画で共通）。描いたものの位置を返す（吹き出し用）。 */

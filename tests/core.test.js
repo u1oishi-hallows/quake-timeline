@@ -474,6 +474,10 @@ t('想定震源域からの距離：震源から面（升ごとの深さの幅�
   assert.deepStrictEqual(ss.map(function (g) { return [g.group, g.n, g.max]; }), [[0, 2, 1], [2, 1, 4]]);
   assert.ok(Math.abs(ss[0].meq - QC.magOfEnergy(QC.energyJ(5) + QC.energyJ(6))) < 1e-9);
   assert.deepStrictEqual(QC.srcStats(ev3, [2, 3], Dd, Gg, 10), []);
+  // 広さ：空白でない升（0.05 度四方、東西は cos(緯度)）の合計。海域 a は 35 度の 2 升
+  var cell35 = 0.05 * 111.32 * Math.cos(35 * Math.PI / 180) * 0.05 * 110.574;
+  assert.ok(Math.abs(QC.srcAreaKm2(data.groups[0]) - 2 * cell35) < 1e-9);
+  assert.ok(Math.abs(QC.srcAreaKm2({ grid: { lon0: 0, lat0: 60, step: 0.05, nx: 2, ny: 2, z: [-3, 10], w: [0] } }) - 0.05 * 111.32 * Math.cos(60.05 * Math.PI / 180) * 0.05 * 110.574) < 1e-9);
 });
 t('時間の幅で切り出す：開始は含まず、終わり（T）は含む', function () {
   var ev = evOf(['2024-01-01T00:00:00.0,35,135,10,2,,P,,', '2024-01-02T00:00:00.0,35,135,10,2,,P,,',

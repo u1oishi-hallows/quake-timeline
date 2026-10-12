@@ -497,6 +497,18 @@
     return best <= SRC_MAX_KM ? best : Infinity;
   }
   function srcLast() { return { group: _srcG, side: _srcSide }; }
+  /** 海域の想定震源域の広さ（km²、地図の上の面積）：深さの格子の升（空白でない所）の面積の合計。升は 0.05 度四方（東西は cos(緯度) で縮む） */
+  function srcAreaKm2(group) {
+    var gr = group.grid, n = 0, A = 0;
+    for (var q = 0; q < gr.z.length; q++) {
+      var v = gr.z[q];
+      if (v < 0) { n -= v; continue; }
+      var lat = gr.lat0 + Math.floor(n / gr.nx) * gr.step;
+      A += gr.step * 111.32 * Math.cos(lat * Math.PI / 180) * gr.step * 110.574;
+      n++;
+    }
+    return A;
+  }
   /** 想定震源域ごとの集計：面から nearKm 以内の地震（いちばん近い海域に数える）の回数・エネルギーの合計（M 相当）・最大の地震。
    *  D は地震ごとの距離、G はいちばん近い海域の番号（srcDistance と srcLast で求めたもの）。回数 0 の海域は返さない。エネルギーの大きい順 */
   function srcStats(ev, idx, D, G, nearKm) {
@@ -680,7 +692,7 @@
     DEP_COLORS: DEP_COLORS, DEP_UNKNOWN: DEP_UNKNOWN, INT_STYLES: INT_STYLES, INT_UNKNOWN: INT_UNKNOWN,
     intensityStyle: intensityStyle, colorOf: colorOf, styleOf: styleOf, ageColor: ageColor, alphas: alphas,
     visibleAt: visibleAt, depthLook: depthLook, energyJ: energyJ, magOfEnergy: magOfEnergy, formatEnergy: formatEnergy,
-    SRCD_STEPS: SRCD_STEPS, SRCD_UNKNOWN: SRCD_UNKNOWN, srcFade: srcFade, desaturate: desaturate, srcStats: srcStats, SRC_MAX_KM: SRC_MAX_KM, srcPrepare: srcPrepare, srcDistance: srcDistance, srcLast: srcLast,
+    SRCD_STEPS: SRCD_STEPS, SRCD_UNKNOWN: SRCD_UNKNOWN, srcFade: srcFade, desaturate: desaturate, srcStats: srcStats, srcAreaKm2: srcAreaKm2, SRC_MAX_KM: SRC_MAX_KM, srcPrepare: srcPrepare, srcDistance: srcDistance, srcLast: srcLast,
     rng: rng, kmeans: kmeans, kmeansClusters: kmeansClusters, kmFit: kmFit, kmAt: kmAt, kmActiveMedian: kmActiveMedian, kmSolve: kmSolve, kmPoints: kmPoints, kmInitialK: kmInitialK, KM_MAX: KM_MAX, aggregate: aggregate, aggState: aggState, aggAdd: aggAdd, aggFinish: aggFinish, aggRadius: aggRadius, kOfLevel: kOfLevel, idxRange: idxRange, computeStats: computeStats, rotScreen: rotScreen, rotDelta: rotDelta,
     screenXAzimuth: screenXAzimuth, dirName: dirName, depthTicks: depthTicks, project0: project0, estIntensity: estIntensity, INT_THRESHOLDS: INT_THRESHOLDS,
     RING_LEVELS: RING_LEVELS, ringRadiiKm: ringRadiiKm, sphereRadiusKm: sphereRadiusKm, geomSphereRadiusKm: geomSphereRadiusKm, surfaceRadiusKm: surfaceRadiusKm, pxPerKm: pxPerKm, dailyCounts: dailyCounts, timeTicks: timeTicks
