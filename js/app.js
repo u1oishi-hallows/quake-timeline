@@ -818,11 +818,27 @@
   }
   function fmtInt(n) { return n.toLocaleString(); }
   /** まとめの表と棒グラフを描く（画面と動画で共通）。W×H は塗る範囲（ctx の単位） */
+  /** 期間のまとめ（画面全体に重ねる）。字の大きさ u は窓の大きさから決め、全部が入りきらなければ入るまで小さくする
+   *  （横長で低い窓などで、下の段が出典や画面の外にはみ出して重ならないように）。入るかは、描かずに位置だけ測って確かめる */
   function drawStatsPanel(ctx, W, H, scale, s, alpha) {
     ctx.save();
     ctx.globalAlpha = 1; ctx.fillStyle = 'rgba(8,12,20,' + (0.86 * alpha) + ')'; ctx.fillRect(0, 0, W, H);
-    ctx.globalAlpha = alpha;
     var u = Math.max(9 * scale, Math.min(W / 52, H / 24)), pad = Math.max(14 * scale, W * 0.04);
+    var foot = function (uu) { return H - pad * 0.6 - (s.srcAreas ? 2.0 : 1.0) * uu - 0.6 * uu; };
+    var dry = new Proxy({}, {             // 測るだけの ctx（字の幅は本物で測り、描く命令は捨てる）
+      get: function (_, k) { if (k === 'measureText') return function (t) { return ctx.measureText(t); }; var v = ctx[k]; return typeof v === 'function' ? function () {} : v; },
+      set: function (_, k, v) { if (k === 'font') ctx.font = v; return true; }
+    });
+    for (var tries = 0; tries < 12 && statsBody(dry, W, H, scale, s, alpha, u, pad) > foot(u) && u > 6 * scale; tries++) u *= 0.9;
+    statsBody(ctx, W, H, scale, s, alpha, u, pad);
+    ctx.globalAlpha = 0.7 * alpha; ctx.font = 0.75 * u + 'px sans-serif'; ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillText('出典：気象庁（震源データ・震源リスト・震度データベース）。エネルギーは log E = 1.5M + 4.8（J）による推定。', pad, H - pad * 0.6 - (s.srcAreas ? 1.9 : 0.9) * u, W - 2 * pad);
+    if (s.srcAreas) ctx.fillText('想定震源域ごと＝震源から震源域の面まで' + S.srcNearKm + 'km以内の地震を、いちばん近い海域に。広さは震源域の地図の上の面積。1万km²あたり＝期間の合計を広さで割った値。震源域は長期評価のモデル（J-SHIS を加工）', pad, H - pad * 0.6 - 0.9 * u, W - 2 * pad);
+    ctx.restore();
+  }
+  /** まとめの中身を字の大きさ u で描き、いちばん下の位置を返す */
+  function statsBody(ctx, W, H, scale, s, alpha, u, pad) {
+    ctx.globalAlpha = alpha;
     ctx.fillStyle = '#ffffff'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
     ctx.font = 'bold ' + 1.7 * u + 'px sans-serif'; ctx.fillText('期間のまとめ', pad, pad);
     ctx.font = 1.05 * u + 'px sans-serif';
@@ -867,12 +883,13 @@
       ctx.fillStyle = '#fff'; ctx.fillText(fmtInt(c), bx + 4.6 * u + len + 0.5 * u, yy + bh / 2);
       ctx.textBaseline = 'top';
     });
-    // 想定震源域ごと：面から srcNearKm km 以内の地震の合計と、1 万 km² あたり。対象の海域は全部出す（入りきらなければ行を詰め、字を小さくする）。
+    // 想定震源域ごと：面から srcNearKm km 以内の地震の合計と、1 万 km² あたり。対象の海域は全部出す（入りきらなければ全体の字を小さくする）。
     // 置き場所は表と棒グラフの下、横幅いっぱい。棒の長さは合計の M 相当
+    var bottom = Math.max(y, by + 1.8 * u + bars.length * (bh + 0.45 * u));
     if (s.srcAreas) {
       var list = s.srcAreas, sx = pad, sw = W - 2 * pad;
-      var sy = Math.max(y, wide ? by + 1.8 * u + bars.length * (bh + 0.45 * u) : 0) + 0.7 * u;
-      var avail = H - pad - 2.4 * u - sy - 2.6 * u, rh = Math.min(bh + 0.45 * u, avail / Math.max(list.length, 1)), fs = Math.max(0.6 * u, Math.min(0.95 * u, rh * 0.62));
+      var sy = bottom + 0.7 * u, rh = bh + 0.3 * u, fs = 0.95 * u;
+      bottom = sy + 1.5 * u + 1.1 * u + list.length * rh;
       ctx.globalAlpha = alpha; ctx.font = 'bold ' + 1.0 * u + 'px sans-serif'; ctx.fillStyle = '#fff'; ctx.textBaseline = 'top';
       ctx.fillText('想定震源域ごと（面から' + S.srcNearKm + 'km以内の地震）', sx, sy);
       ctx.font = fs + 'px sans-serif';
@@ -899,10 +916,7 @@
         ctx.globalAlpha = alpha; ctx.textBaseline = 'top';
       });
     }
-    ctx.globalAlpha = 0.7 * alpha; ctx.font = 0.75 * u + 'px sans-serif'; ctx.fillStyle = '#fff';
-    ctx.fillText('出典：気象庁（震源データ・震源リスト・震度データベース）。エネルギーは log E = 1.5M + 4.8（J）による推定。', pad, H - pad * 0.6 - (s.srcAreas ? 1.9 : 0.9) * u, W - 2 * pad);
-    if (s.srcAreas) ctx.fillText('想定震源域ごと＝震源から震源域の面まで' + S.srcNearKm + 'km以内の地震を、いちばん近い海域に。広さは震源域の地図の上の面積。1万km²あたり＝期間の合計を広さで割った値。震源域は長期評価のモデル（J-SHIS を加工）', pad, H - pad * 0.6 - 0.9 * u, W - 2 * pad);
-    ctx.restore();
+    return bottom;
   }
   /** 地震を描く（画面と動画で共通）。描いたものの位置を返す（吹き出し用）。 */
   function drawQuakes(ctx, T, proj, scale, W, H) {
@@ -1117,10 +1131,16 @@
   }
   function renderLegend() {
     var L = legendItems(), h = '<div class="ttl">' + L.title + '</div>';
+    // 見本の円の大きさ（集合マーカーは M 相当ごとの大きさ）。行の高さは円に合わせ、円は決まった幅の枠の真ん中に置く（字の位置をそろえ、円どうしを重ねない）
+    var agg = sumView() || S.mode === 'timeAgg', rOf = function (it) {
+      if (it.m == null) return 5;
+      return agg ? Math.max(3, Math.min(QC.aggRadius(it.m, S) * 0.45, 11)) : S.shape === 'circle' ? Math.max(3, Math.min(QC.radius(it.m, S), 11)) : 5;
+    };
+    var rMax = Math.max.apply(null, L.items.map(rOf).concat([5]));
     L.items.forEach(function (it) {
-      var r = it.m != null && S.shape === 'circle' ? Math.max(3, Math.min(QC.radius(it.m, S), 14)) : 5;
-      h += '<div class="row"><span class="sw" style="width:' + 2 * r + 'px;height:' + 2 * r + 'px;background:' +
-        it.c + '99;border-color:' + (it.stroke || it.c) + (it.dash ? ';border-style:dashed' : '') + '"></span>' + it.label + '</div>';
+      var r = rOf(it);
+      h += '<div class="row" style="height:' + Math.max(18, 2 * r + 3) + 'px"><span class="swBox" style="width:' + (2 * rMax + 3) + 'px"><span class="sw" style="width:' + 2 * r + 'px;height:' + 2 * r + 'px;background:' +
+        it.c + '99;border-color:' + (it.stroke || it.c) + (it.dash ? ';border-style:dashed' : '') + '"></span></span>' + it.label + '</div>';
     });
     if (sumView() || S.mode === 'timeAgg') {
       h += '<div class="note" style="color:#333;max-width:150px">' + aggNote() + '</div>';
