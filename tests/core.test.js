@@ -501,6 +501,62 @@ t('震源評価（df）：新しい見出しの CSV を読み、前の版（無�
   QC.applyFixedDepth(ev, false);
   assert.ok(isNaN(ev.dep[1]) && ev.depRaw[1] === 0);       // 何度切り替えても元の深さは残る
 });
+t('累積の k-means：その時刻までの全部をまとめる。先の地震を使わない・前の節目の中心から続ける・回数が合う', function () {
+  var D = QC.DAY, P = [], ms = [], ids = [], ts = [];
+  // 0〜9 日に A（x≈0）、10〜19 日に B（x≈500）、20〜29 日に C（x≈1000）。各日 3 回
+  for (var d = 0; d < 30; d++) for (var j = 0; j < 3; j++) {
+    var x0 = d < 10 ? 0 : d < 20 ? 500 : 1000;
+    P.push(x0 + j, 0, 10); ms.push(3 + (d === 25 && j === 0 ? 3 : 0)); ids.push(d * 3 + j); ts.push(d * D + j * 3600e3);
+  }
+  var job = function (Pa, msa) { return { P: Float64Array.from(Pa), dim: 3, ms: msa, ids: ids, ts: ts, k: 3, t0: 0, t1: 30 * D, nk: 6 }; };
+  var res = QC.kmCumSolve(job(P, ms));
+  assert.strictEqual(res.frames.length, 6);
+  // その時刻までの回数の合計（節目のあいだの時刻も、最初の節目より前も）
+  [0.5, 4.9, 5, 12.3, 29.9].forEach(function (day) {
+    var T = day * D, want = ts.filter(function (t) { return t <= T; }).length;
+    assert.strictEqual(QC.kmCumAt(res, T).reduce(function (a, g) { return a + g.n; }, 0), want, 'day ' + day);
+  });
+  // 15 日目は A と B だけ（C はまだ起きていない）を 3 つに。29.9 日目には A・B・C の 3 つ、最大は 25 日目の M6
+  var at15 = QC.kmCumAt(res, 15 * D).map(function (g) { return g.ev; });
+  assert.ok(at15.some(function (e) { return e < 30; }) && at15.some(function (e) { return e >= 30 && e < 60; }) && at15.every(function (e) { return e < 60; }));
+  var last = QC.kmCumAt(res, 29.9 * D);
+  assert.strictEqual(last.length, 3);
+  assert.strictEqual(last[last.length - 1].maxI, 75);
+  // 先の地震を使わない：20 日目より後の地震の場所と M を変えても、15 日目の姿は同じ
+  var P2 = P.slice(), ms2 = ms.slice();
+  for (var q = 60; q < 90; q++) { P2[q * 3] = -3000; ms2[q] = 7; }
+  var sig = function (a) { return JSON.stringify(a.map(function (g) { return [g.ev, g.n, g.maxI]; })); };
+  assert.strictEqual(sig(QC.kmCumAt(QC.kmCumSolve(job(P2, ms2)), 15 * D)), sig(QC.kmCumAt(res, 15 * D)));
+  // 前の節目の中心から続ける：新しい地震が無い節目（30 日より後）では中心が動かない（初めからやり直すと変わりうる）
+  var long = QC.kmCumSolve(Object.assign(job(P, ms), { t1: 40 * D, nk: 8 })), F = long.frames;
+  assert.deepStrictEqual(Array.from(F[7].C), Array.from(F[5].C));
+  assert.strictEqual(F[5].end, 90);
+  // 中心を増やすとき、前の中心はそのまま残る
+  var C0 = Float64Array.from([0, 0, 10]), Cx = QC.extendCenters(Float64Array.from([0, 0, 10, 500, 0, 10, 1000, 0, 10]), 3, C0, 3, QC.rng(1));
+  assert.deepStrictEqual(Array.from(Cx.slice(0, 3)), [0, 0, 10]);
+  assert.strictEqual(new Set([Cx[3], Cx[6]]).size, 2);
+  assert.ok([500, 1000].indexOf(Cx[3]) >= 0 && [500, 1000].indexOf(Cx[6]) >= 0);
+  assert.deepStrictEqual(QC.kmCumAt(res, -1), []);
+  // 前の節目の中心から続けていること：0〜4 日に x=0 と x=200、5〜9 日に その間の x=100 が加わる（k=2）。
+  // 2 つ目の節目の中心は「1 つ目の中心から始めた k-means」と同じで（約 67・201）、初めからやり直したもの（種 7、約 50・151）とは違う
+  var P3 = [], m3 = [], i3 = [], t3 = [];
+  for (var dd = 0; dd < 10; dd++) for (var jj = 0; jj < 4; jj++) {
+    var xx = dd < 5 ? (jj < 2 ? 0 : 200) : 100;
+    P3.push(xx + jj % 2, 0, 10); m3.push(3); i3.push(dd * 4 + jj); t3.push(dd * D + jj * 3600e3);
+  }
+  var j3 = { P: Float64Array.from(P3), dim: 3, ms: m3, ids: i3, ts: t3, k: 2, t0: 0, t1: 10 * D, nk: 2 }, r3 = QC.kmCumSolve(j3);
+  var warm = QC.kmeans(Float64Array.from(P3), 3, 2, { init: r3.frames[0].C, iters: 12 }), cold = QC.kmeans(Float64Array.from(P3), 3, 2, { seed: 7, iters: 30 });
+  assert.deepStrictEqual(Array.from(r3.frames[1].C), Array.from(warm));
+  assert.notDeepStrictEqual(Array.from(warm), Array.from(cold));
+  // 別の計算場所でも同じ（累積）
+  var vm2 = require('vm'), fs2 = require('fs'), path2 = require('path'), sent2 = [];
+  var cx2 = { postMessage: function (m) { sent2.push(m); }, Float64Array: Float64Array, Int32Array: Int32Array };
+  cx2.self = cx2; cx2.importScripts = function (f) { vm2.runInContext(fs2.readFileSync(path2.join(__dirname, '..', 'js', f), 'utf8'), cx2); };
+  vm2.createContext(cx2); vm2.runInContext(fs2.readFileSync(path2.join(__dirname, '..', 'js', 'kmworker.js'), 'utf8'), cx2);
+  cx2.onmessage({ data: Object.assign({}, j3, { P: Float64Array.from(P3), ms: Float64Array.from(m3), ids: Int32Array.from(i3), ts: Float64Array.from(t3), type: 'cum', seq: 3 }) });
+  assert.strictEqual(sent2[0].seq, 3);
+  assert.strictEqual(JSON.stringify(QC.kmCumAt(sent2[0], 9.5 * D)), JSON.stringify(QC.kmCumAt(r3, 9.5 * D)));
+});
 t('時間の幅で切り出す：開始は含まず、終わり（T）は含む', function () {
   var ev = evOf(['2024-01-01T00:00:00.0,35,135,10,2,,P,,', '2024-01-02T00:00:00.0,35,135,10,2,,P,,',
                  '2024-01-03T00:00:00.0,35,135,10,2,,P,,', '2024-01-04T00:00:00.0,35,135,10,2,,P,,']);

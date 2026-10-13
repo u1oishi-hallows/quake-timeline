@@ -76,7 +76,7 @@
         el.dispatchEvent(new Event('change'));
       });
       el.addEventListener('change', function () {
-        if (k === 't0' || k === 't1') return onPeriodChange();
+        if (k === 't0' || k === 't1') return onPeriodChange(k);
         var v = NUM.indexOf(k) >= 0 ? +el.value : el.value;
         if (NUM.indexOf(k) >= 0 && !isFinite(v)) { el.value = S[k]; return; }
         S[k] = v;
@@ -151,7 +151,7 @@
       // 続けて動かしている間はまとめ直さない。手が止まって KM_WAIT ms たってから（それまでは前の塊を描く）
       clearTimeout(st.viewTimer);
       st.viewTimer = setTimeout(function () {
-        st.viewVer = (st.viewVer || 0) + 1; if (S.mode !== 'time' && S.aggMethod === 'kmeans') drawMap();
+        st.viewVer = (st.viewVer || 0) + 1; if (S.mode !== 'time' && isKm()) drawMap();
       }, st.rec ? 0 : KM_WAIT);
     });
     map.on('zoomstart', function () { c.style.visibility = 'hidden'; });
@@ -382,8 +382,9 @@
   function applyShapeClass() {
     document.body.classList.toggle('agg', S.mode !== 'time');
     document.body.classList.toggle('tagg', S.mode === 'timeAgg');
-    document.body.classList.toggle('km', S.aggMethod === 'kmeans');
-    document.body.classList.toggle('grid', S.aggMethod !== 'kmeans');
+    document.body.classList.toggle('km', isKm());
+    document.body.classList.toggle('grid', !isKm());
+    document.body.classList.toggle('kmcum', S.aggMethod === 'kmcum');
     if ($('aggKV')) $('aggKV').textContent = '段階' + S.aggLevel + '（' + kNow() + '個）';
     document.body.classList.toggle('circle', S.shape === 'circle');
     if ($('volV')) $('volV').textContent = Math.round(S.vol * 100) + '%';
@@ -461,7 +462,7 @@
     } else {
       var di = dayInfo(st.T);
       $('clock').textContent = QC.formatClock(st.T, S.step);
-      $('clockNote').textContent = (S.mode === 'timeAgg' ? '集合マーカー：' + (S.aggMethod === 'kmeans' ? 'k-means（xyzt）' : windowText() + 'の合計') + '　' : '') + di.text;
+      $('clockNote').textContent = (S.mode === 'timeAgg' ? '集合マーカー：' + kmLabel() + '　' : '') + di.text;
     }
   }
   function drawMap() {
@@ -507,7 +508,7 @@
   function windowText() { return S.aggWindow === 'cum' ? '期間の始めから' : '直近' + S.aggWindow + '日'; }
   /** 時間に沿った集合マーカー：時刻 T までの「まとめる時間の幅」の地震を格子でまとめ、発生の瞬間には波紋を出す */
   function drawTimeAgg(ctx, T, scale, W, H) {
-    var r = windowRange(T), drawn = S.aggMethod === 'kmeans' ? drawKm(ctx, scale, W, H, T) : drawAggregate(ctx, scale, W, H, r[0], r[1]);
+    var r = windowRange(T), drawn = isKm() ? drawKm(ctx, scale, W, H, T) : drawAggregate(ctx, scale, W, H, r[0], r[1]);
     if (S.ripple) {
       var rippleDur = S.rippleFrames * S.step, rr = QC.idxRange(st.ev, st.f.idx, T - rippleDur, T), proj = makeProj(scale);
       for (var k = rr[0]; k < rr[1]; k++) {
@@ -545,20 +546,27 @@
    *  計算は別の計算場所（js/kmworker.js）で行い、その間は画面を止めない。答えが届くまでは、
    *  見える範囲かマーカーの数だけが違う前の答えをそのまま描く（地震の選び方・期間が違う答えは描かない）。
    *  書き出し中は、そのコマで答えが要るので画面の側で計算する */
+  /** k-means でまとめるか（xyzt・累積のどちらも） */
+  function isKm() { return S.aggMethod === 'kmeans' || S.aggMethod === 'kmcum'; }
+  function kmLabel() { return S.aggMethod === 'kmcum' ? 'k-means（累積）' : S.aggMethod === 'kmeans' ? 'k-means（xyzt）' : windowText() + 'の合計'; }
+  /** 累積の k-means の節目の数：地震が多く塊が多いほど減らす（計算の重さを数秒に抑える。24〜150） */
+  function kmCumFrames(n, k) { return Math.max(24, Math.min(150, Math.round(4e8 / Math.max(1, n * k)))); }
+  /** dim：3＝xyz（期間の合計）、4＝xyzt（再生）、'cum'＝累積（再生） */
   function kmClusters(dim) {
     // 段階ごとに計算結果を取っておく（同じ表示範囲・期間・重みなら、段階を行き来しても計算し直さない）
     var same = [dim, S.kmDepthW, S.kmKmPerDay, st.fVer, st.t0, st.t1].join('|'), base = same + '|' + st.viewVer, key = base + '|' + kNow();
     if (!st.kmCache || st.kmCache.base !== base) st.kmCache = { base: base, byK: {} };
     if (st.kmCache.byK[key]) return (st.km = st.kmShown = st.kmCache.byK[key]);
-    var job = kmJob(dim);
+    var job = kmJob(dim === 'cum' ? 3 : dim);
+    if (dim === 'cum') { job.type = 'cum'; job.nk = kmCumFrames(job.ids.length, job.k); }
     if (st.rec || !kmWorker()) {
-      var r = QC.kmSolve(job);
+      var r = dim === 'cum' ? QC.kmCumSolve(job) : QC.kmSolve(job);
       return (st.km = st.kmCache.byK[key] = kmResult(key, same, dim, job, r));
     }
     if (!st.kmPending || st.kmPending.key !== key) {
       st.kmSeq = (st.kmSeq || 0) + 1;
       if (st.kmPending) { st.kmW.terminate(); st.kmW = null; kmWorker(); }    // 前の計算は途中でやめる（答えはもう要らない）
-      st.kmPending = { key: key, same: same, dim: dim, job: { dim: dim, k: job.k, K: job.K, t0: job.t0, t1: job.t1, s: job.s, n: job.ids.length, noDep: job.noDep }, seq: st.kmSeq, t: Date.now() };
+      st.kmPending = { key: key, same: same, dim: dim, job: { dim: job.dim, k: job.k, K: job.K, t0: job.t0, t1: job.t1, s: job.s, n: job.ids.length, noDep: job.noDep }, seq: st.kmSeq, t: Date.now() };
       job.seq = st.kmSeq;
       st.kmW.postMessage(job, [job.P.buffer, job.ms.buffer, job.ids.buffer, job.ts.buffer]);
       kmBusy(true);
@@ -579,7 +587,7 @@
       if (d.error) { setStatus('集合マーカーをまとめられませんでした：' + d.error, true); return; }
       if (!st.kmCache || p.key.indexOf(st.kmCache.base + '|') !== 0) return;   // 届く前に条件が変わった
       st.kmCache.byK[p.key] = kmResult(p.key, p.same, p.dim, p.job, d);
-      st.kmLastMs = d.ms;
+      st.kmLastMs = typeof d.ms === 'number' ? d.ms : d.ms_;
       drawMap();
     };
     st.kmW.onerror = function (e) {
@@ -591,7 +599,15 @@
     return st.kmW;
   }
   function kmResult(key, same, dim, job, r) {
-    return (st.kmShown = { key: key, same: same, dim: dim, clusters: r.clusters, noDep: job.noDep, n: job.n != null ? job.n : job.ids.length, K: r.K, active: r.active });
+    return (st.kmShown = { key: key, same: same, dim: dim, clusters: r.clusters || [], cum: r.frames ? r : null, noDep: job.noDep,
+                           n: job.n != null ? job.n : job.ids.length, K: r.K || job.k, active: r.active });
+  }
+  /** 時刻 T（null なら期間の合計）に描く塊：[{ a（その時刻の姿）, g（塊。累積では null）}]、エネルギーの小さい順 */
+  function kmView(T) {
+    var cum = T != null && S.aggMethod === 'kmcum', dim = T == null ? 3 : cum ? 'cum' : 4, km = kmClusters(dim) || kmEmpty(dim), items = [];
+    if (cum) { if (km.cum) items = QC.kmCumAt(km.cum, T).map(function (a) { return { a: a, g: null }; }); }
+    else km.clusters.forEach(function (g) { var a = kmAt(g, T); if (a) items.push({ a: a, g: g }); });
+    return { km: km, items: items, cum: cum };
   }
   function kmBusy(on) { var b = $('kmBusy'); if (b) b.style.display = on ? 'block' : 'none'; }
   /** まとめる地震の座標を作る（見えている範囲だけ） */
@@ -618,13 +634,12 @@
   /** 計算中で、まだ描ける答えが無いとき */
   function kmEmpty(dim) { return { clusters: [], noDep: 0, n: 0, K: 0, active: 0, dim: dim, pending: true }; }
   function drawKm(ctx, scale, W, H, T) {
-    var km = kmClusters(T == null ? 3 : 4) || kmEmpty(T == null ? 3 : 4), proj = makeProj(scale), z = map.getZoom(), drawn = [];
-    for (var q = km.clusters.length - 1; q >= 0; q--) {           // 大きい塊を先に（下に）
-      var g = km.clusters[q], a = kmAt(g, T);
-      if (!a) continue;
+    var vw = kmView(T), proj = makeProj(scale), z = map.getZoom(), drawn = [];
+    for (var q = vw.items.length - 1; q >= 0; q--) {           // 大きい塊を先に（下に）
+      var g = vw.items[q].g, a = vw.items[q].a;
       var p = proj(a.ev), x = p[0], y = p[1], r = QC.aggRadius(a.meq, S) * scale;
       if (x < -r || y < -r || x > W + r || y > H + r) continue;
-      var spread = g.rmsXY * QC.pxPerKm(st.ev.lat[a.ev], z) * scale;   // 塊の広がり（薄い点線）
+      var spread = g ? g.rmsXY * QC.pxPerKm(st.ev.lat[a.ev], z) * scale : 0;   // 塊の広がり（薄い点線。累積では出さない）
       if (spread > r * 1.15) {
         ctx.save(); ctx.setLineDash([3 * scale, 3 * scale]); ctx.globalAlpha = 0.45 * a.alpha; ctx.strokeStyle = QC.colorOf('mag', a.meq, 0, 0);
         ctx.lineWidth = 1 * scale; ctx.beginPath(); ctx.arc(x, y, spread, 0, 2 * Math.PI); ctx.stroke(); ctx.restore();
@@ -637,7 +652,7 @@
   }
   function drawXsecKm(ctx, Wv, Hv, top, height, scale, bg, ink, sub, T) {
     var ev = st.ev, ih = height - (XS.top + XS.bottom) * scale, maxKm = xsecMaxKm(ih, scale), y0 = top + XS.top * scale;
-    var km = kmClusters(T == null ? 3 : 4) || kmEmpty(T == null ? 3 : 4), proj = makeProj(scale), items = [], deep = 0, total = 0;
+    var vw = kmView(T), km = vw.km, proj = makeProj(scale), items = [], deep = 0, total = 0;
     ctx.save(); ctx.beginPath(); ctx.rect(0, top, Wv, height); ctx.clip();
     ctx.fillStyle = bg; ctx.fillRect(0, top, Wv, height);
     ctx.font = 10 * scale + 'px sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
@@ -647,9 +662,8 @@
       ctx.globalAlpha = 1; ctx.fillText(d + 'km', 4 * scale, y + 7 * scale);
     });
     var rmax = Math.max(6 * scale, ih * 0.35);
-    for (var q = km.clusters.length - 1; q >= 0; q--) {
-      var a = kmAt(km.clusters[q], T);
-      if (!a) continue;
+    for (var q = vw.items.length - 1; q >= 0; q--) {
+      var a = vw.items[q].a;
       total += a.n;
       var d = ev.dep[a.ev];
       if (d > maxKm) { deep++; continue; }
@@ -660,10 +674,10 @@
     for (q = items.length - 1; q >= 0; q--) drawAggLabel(ctx, items[q][0], items[q][1], items[q][2], items[q][3], scale);
     var az = QC.screenXAzimuth(S.bearing);
     ctx.font = 11 * scale + 'px sans-serif'; ctx.textBaseline = 'top'; ctx.fillStyle = ink; ctx.textAlign = 'left';
-    var tailTxt = total.toLocaleString() + '回・' + (T == null ? km.clusters.length + '塊' : '全体' + km.clusters.length + '塊（同時に約' + km.active + '）') +
+    var tailTxt = total.toLocaleString() + '回・' + (T == null ? km.clusters.length + '塊' : vw.cum ? vw.items.length + '塊' : '全体' + km.clusters.length + '塊（同時に約' + km.active + '）') +
       (deep ? '・深すぎて範囲外 ' + deep + '塊' : '') + (km.noDep ? '・深さ不明 ' + km.noDep : '');
     var room = Wv - XS.right * scale - ctx.measureText(tailTxt).width - 60 * scale;
-    var headTxt = '断面図（k-means ' + (T == null ? 'xyz・期間の合計' : 'xyzt・その時刻まで') + '）　横＝地図の横方向（← ' + QC.dirName(az + 180) + '　' + QC.dirName(az) + ' →）　縦＝深さ 0〜' + Math.round(maxKm) + 'km';
+    var headTxt = '断面図（k-means ' + (T == null ? 'xyz・期間の合計' : vw.cum ? '累積・その時刻まで全部' : 'xyzt・その時刻まで') + '）　横＝地図の横方向（← ' + QC.dirName(az + 180) + '　' + QC.dirName(az) + ' →）　縦＝深さ 0〜' + Math.round(maxKm) + 'km';
     if (ctx.measureText(headTxt).width > room) headTxt = '断面図（k-means）← ' + QC.dirName(az + 180) + '　' + QC.dirName(az) + ' →　0〜' + Math.round(maxKm) + 'km';   // 幅が足りなければ短く
     ctx.fillText(headTxt, 48 * scale, top + 2 * scale);
     ctx.textAlign = 'right';
@@ -679,7 +693,7 @@
   }
   /** 地図に集合マーカーを描く（画面と動画で共通）。吹き出し用に [x, y, r, 最大の地震, -1, 塊] を返す */
   function drawAggregate(ctx, scale, W, H, k0, k1) {
-    if (S.aggMethod === 'kmeans') return drawKm(ctx, scale, W, H, null);
+    if (isKm()) return drawKm(ctx, scale, W, H, null);
     var list = aggClusters(k0, k1), o = map.getPixelBounds().min, ms = map.getSize(), v = viewSize(), drawn = [];
     for (var q = list.length - 1; q >= 0; q--) {           // 大きい塊を先に（下に）、小さい塊を上に
       var g = list[q], p = QC.rotScreen(g.x - o.x, g.y - o.y, ms.x, ms.y, v.W, v.H, S.bearing);
@@ -694,7 +708,7 @@
   }
   /** 断面図を集合マーカーで（横＝画面の横方向、縦＝深さ）。地図に見えている範囲の地震だけ */
   function drawXsecAgg(ctx, Wv, Hv, top, height, scale, bg, ink, sub, T) {
-    if (S.aggMethod === 'kmeans') return drawXsecKm(ctx, Wv, Hv, top, height, scale, bg, ink, sub, T);
+    if (isKm()) return drawXsecKm(ctx, Wv, Hv, top, height, scale, bg, ink, sub, T);
     var ev = st.ev, ih = height - (XS.top + XS.bottom) * scale, maxKm = xsecMaxKm(ih, scale), y0 = top + XS.top * scale;
     var src = st.viewIdx && S.chartView ? st.viewIdx : st.f.idx;
     if (T != null) { var wr = windowRange(T); src = st.f.idx.subarray(wr[0], wr[1]); }   // 時間に沿った集合：時間の幅の地震だけ
@@ -1143,8 +1157,11 @@
   function aggNote() {
     if (st.v3d) return '集合マーカー：k-means（震源の' + (sumView() ? '東西・南北・深さの3次元' : '東西・南北・深さ・時間の4次元') + '）で、立体表示に選んだ範囲の地震を' +
       (sumView() ? kNow() + '個に' : '同時に約' + kNow() + '個見えるように') + 'まとめ、位置＝中心に近い実際の震源、大きさと色＝推定エネルギーの合計（M相当）、数字＝' +
-      { meq: 'M相当', count: '回数', energy: 'エネルギー' }[S.aggLabel] + (S.aggMethod === 'kmeans' ? '' : '（立体表示ではいつも k-means）');
-    if (S.aggMethod === 'kmeans') return '集合マーカー：k-means（震源の' + (sumView() ? '東西・南北・深さの3次元' : '東西・南北・深さ・時間の4次元') +
+      { meq: 'M相当', count: '回数', energy: 'エネルギー' }[S.aggLabel] + (isKm() ? '' : '（立体表示ではいつも k-means）');
+    if (S.aggMethod === 'kmcum' && !sumView()) return '集合マーカー：k-means（累積）。期間の始めからその時刻までの地震を全部、震源の東西・南北・深さで' + kNow() +
+      '個にまとめる（過去の地震もその時刻の地震として扱い、消えない）。中心は前の節目の中心から続けて求める。位置＝中心に近い実際の震央、大きさと色＝推定エネルギーの合計（M相当）、数字＝' +
+      { meq: 'M相当', count: '回数', energy: 'エネルギー' }[S.aggLabel];
+    if (isKm()) return '集合マーカー：k-means（震源の' + (sumView() ? '東西・南北・深さの3次元' : '東西・南北・深さ・時間の4次元') +
       '）で地図に見えている範囲の地震を' + (sumView() ? kNow() + '個に' : '同時に約' + kNow() + '個見えるように') + 'まとめ、位置＝中心に近い実際の震央、大きさと色＝推定エネルギーの合計（M相当）、数字＝' +
       { meq: 'M相当', count: '回数', energy: 'エネルギー' }[S.aggLabel] + '、点線＝塊の広がり';
     return '集合マーカー：' + (sumView() ? '期間内' : windowText()) + 'の地震を格子でまとめ、大きさと色＝推定エネルギーの合計（M相当）、数字＝' +
@@ -1454,8 +1471,17 @@
     var last = ms.length ? QC.parseJst(st.manifest.months[ms[ms.length - 1]].last) : Date.now();
     return { first: first, last: last };
   }
-  function onPeriodChange() {
+  var PERIOD_FOLLOW = 365;   // 開始日を動かしたとき、終了日がこの日数より先なら開始日＋この日数まで連れて動かす
+  function onPeriodChange(which) {
     var a = QC.dateToMs($('t0').value), b = QC.dateToMs($('t1').value);
+    // 開始日を大きく過去へ（または終了日より後へ）動かしたら、終了日も連れて動かす（最大 1 年、データの最後まで）。
+    // 長い期間を見たいときは、そのあと終了日を動かす（終了日を動かしたときは開始日を動かさない）
+    var moved = a < st.t0;       // 開始日を過去へ動かした（後ろへ動かしたときは、終了日が開始日より前になったときだけ連れて動かす）
+    if (which === 't0' && !isNaN(a) && !isNaN(b) && ((moved && b - a > PERIOD_FOLLOW * DAY) || b < a)) {
+      b = Math.min(a + (PERIOD_FOLLOW - 1) * DAY, QC.floorDayJst(dataRange().last));
+      if (b < a) b = a;
+      $('t1').value = QC.formatDate(b);
+    }
     if (isNaN(a) || isNaN(b) || b < a) { $('periodNote').innerHTML = '<span class="warn">期間が正しくありません</span>'; return; }
     S.t0 = $('t0').value; S.t1 = $('t1').value;
     applyPeriod();
@@ -1552,7 +1578,7 @@
     var clock = endState ? '期間の合計' : QC.formatClock(st.T, S.step);
     ctx.strokeText(clock, 12 * scale, 10 * scale); ctx.fillStyle = '#1d2433'; ctx.fillText(clock, 12 * scale, 10 * scale);
     var di = endState ? { text: periodText() + '（' + chartIdx().length.toLocaleString() + ' 回）' } : dayInfo(st.T);
-    if (!endState && S.mode === 'timeAgg') di = { text: '集合マーカー：' + (S.aggMethod === 'kmeans' ? 'k-means（xyzt）' : windowText() + 'の合計') + '　' + (di.text || '') };
+    if (!endState && S.mode === 'timeAgg') di = { text: '集合マーカー：' + kmLabel() + '　' + (di.text || '') };
     if (di.text) { ctx.font = 12 * scale + 'px sans-serif'; ctx.lineWidth = 3 * scale; ctx.strokeText(di.text, 14 * scale, 42 * scale); ctx.fillText(di.text, 14 * scale, 42 * scale); }
     drawLegendCanvas(ctx, 10 * scale, 64 * scale, scale);
     // 出典（右下）
@@ -1695,7 +1721,7 @@
   window.__app = { S: S, st: st, setT: setT, boot: boot, drawFrame: drawFrame, QC: QC, getMap: function () { return map; },
     snapshotTiles: snapshotTiles, buildMtBase: buildMtBase, startRecording: startRecording,
     // 立体表示（js/view3d.js）から使う
-    getStats: getStats, startEnding: startEnding, srcHue: srcHue, kmJobOf: kmJobOf, sumView: sumView, srcd: srcd, srcTip: srcTip, srcIds: srcIds, loadSrc: loadSrc, redraw: function () { layoutRot(); drawAll(); },
+    getStats: getStats, startEnding: startEnding, kmCumFrames: kmCumFrames, srcHue: srcHue, kmJobOf: kmJobOf, sumView: sumView, srcd: srcd, srcTip: srcTip, srcIds: srcIds, loadSrc: loadSrc, redraw: function () { layoutRot(); drawAll(); },
     refreshCharts: function () { computeViewIdx(); renderChartBases(); drawCharts(); renderLegend(); } };
   boot();
 })();

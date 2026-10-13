@@ -27,6 +27,9 @@ research/build_source_areas.py（元の J-SHIS は scratchpad のみ）→ data/
 `python3 scripts/fetch.py catalog 1919 2023`（古い年はまとめたファイル、fetch.hypo_files）。CSV に 10 列目 df（震源評価）。深さの欄の桁ずれは震度データベースと突き合わせて確かめた。
 再生ボタン：終わりにいるときは期間の始めから、途中で止めたらそこから（playEnd＝期間の終わりとデータの最後の早いほう）。
 
+### E. k-means（累積）と期間の連れ動き — 済み（2026-10-13）
+QC.kmCumSolve / kmCumAt / extendCenters（core.js）、kmworker の type 'cum'、app の aggMethod 'kmcum'（kmView）、立体表示も対応。期間：onPeriodChange(which)。
+
 ### 次の候補
 - 距離の計算（1 年分で約 0.5 秒）を別の計算場所へ
 - 日本海溝・日本海東縁部で名前の文字が重なる
@@ -43,7 +46,7 @@ research/build_source_areas.py（元の J-SHIS は scratchpad のみ）→ data/
 - 3D の効き（奥行き：小さく・ぼかし・かすみ）は円の表示で既定50%、設定欄は普段は畳む。
 
 ## 守ること（利用者と共有の理念）
-実測してから書く／検査を書いたら壊して落ちるのを確かめる（`python3 tests/mutate.py`、いま113通り全部落ちる）／もっともらしく壊れるのを最優先で潰す
+実測してから書く／検査を書いたら壊して落ちるのを確かめる（`python3 tests/mutate.py`、いま118通り全部落ちる）／もっともらしく壊れるのを最優先で潰す
 （間違った場所・時刻に出さない、不明は不明のまま）／黙って落とさない（件数と理由）／時刻を示す／色は意味に使い凡例を付ける／
 外部データは非公式で変わる・出典を出す／設定はコードに埋めない。説明は平易な日本語で結論から。
 

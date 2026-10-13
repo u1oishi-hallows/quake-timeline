@@ -7,7 +7,15 @@ importScripts('core.js');
 self.onmessage = function (e) {
   var job = e.data, t = Date.now();
   try {
-    var r = QC.kmSolve(job), buf = [];
+    var r, buf = [];
+    if (job.type === 'cum') {     // 累積：節目ごとの中心とまとめ、割り当てに使う座標も返す
+      r = QC.kmCumSolve(job);
+      r.frames.forEach(function (f) { if (f.n) buf.push(f.C.buffer, f.n.buffer, f.E.buffer, f.maxI.buffer, f.mi.buffer, f.mx.buffer, f.bd.buffer); });
+      buf.push(r.P.buffer, r.ms.buffer, r.ids.buffer, r.ts.buffer);
+      self.postMessage({ seq: job.seq, frames: r.frames, P: r.P, dim: r.dim, ms: r.ms, ids: r.ids, ts: r.ts, k: r.k, t0: r.t0, t1: r.t1, ms_: Date.now() - t }, buf);
+      return;
+    }
+    r = QC.kmSolve(job);
     r.clusters.forEach(function (g) {
       buf.push(g.members.buffer, g.times.buffer, g.cumE.buffer, g.bestAt.buffer, g.maxAt.buffer);
     });

@@ -222,8 +222,9 @@
     if (V.km[key]) return V.km[key];
     if (V.kmPending === key) return null;
     var area = (r.e - r.w) * 111.32 * Math.cos((r.s + r.n) / 2 * Math.PI / 180) * (r.n - r.s) * 110.574;
-    var job = A.kmJobOf(Array.from(d.idx), dim, area, d.noDep);
-    if (!window.Worker) { V.km[key] = QC.kmSolve(job); return V.km[key]; }
+    var job = A.kmJobOf(Array.from(d.idx), dim === 'cum' ? 3 : dim, area, d.noDep);
+    if (dim === 'cum') { job.type = 'cum'; job.nk = A.kmCumFrames(job.ids.length, job.k); }     // 累積（その時刻までを全部）
+    if (!window.Worker) { V.km[key] = dim === 'cum' ? QC.kmCumSolve(job) : QC.kmSolve(job); return V.km[key]; }
     if (V.worker) V.worker.terminate();
     V.worker = new Worker('js/kmworker.js');
     V.kmPending = key; V.kmSeq = (V.kmSeq || 0) + 1; job.seq = V.kmSeq;
@@ -265,10 +266,11 @@
     var layers = [groundLayer(), frameLayer(d)].concat(frameLabels(d), srcLayers3d()).filter(Boolean);
     var msg = d.idx.length.toLocaleString() + ' 回' + (d.noDep ? '（深さ不明 ' + d.noDep.toLocaleString() + ' 回は立体の位置が決まらないので描かない）' : '');
     if (sum || S.mode === 'timeAgg') {
-      var km = kmFor(sum ? 3 : 4);
+      var cum = !sum && S.aggMethod === 'kmcum', km = kmFor(sum ? 3 : cum ? 'cum' : 4);
       if (!km) msg = '集合マーカーをまとめています…　' + msg;
       else layers = layers.concat(clusterLayers(km, sum ? null : T));
-      if (km) msg = (sum ? 'k-means（xyz）' + km.clusters.length + '塊' : 'k-means（xyzt）全体' + km.clusters.length + '塊・同時に約' + km.active) + '　' + msg;
+      if (km) msg = (sum ? 'k-means（xyz）' + km.clusters.length + '塊' : cum ? 'k-means（累積）' + QC.kmCumAt(km, T).length + '塊' :
+        'k-means（xyzt）全体' + km.clusters.length + '塊・同時に約' + km.active) + '　' + msg;
     } else layers = layers.concat(quakeLayers(d, T));
     layers = layers.concat(membrane3d());
     $('v3dMsg').textContent = msg + (V.groundNote ? '　' + V.groundNote : '');
@@ -506,7 +508,8 @@
   /** 集合マーカー：塊ごとに、時刻 T の姿（T が null なら期間の合計）。大きい塊を先に（下に） */
   function clusterLayers(km, T) {
     var ev = st.ev, items = [];
-    for (var q = km.clusters.length - 1; q >= 0; q--) {
+    if (km.frames) items = QC.kmCumAt(km, T).reverse();       // 累積：その時刻までの全部をまとめた姿（大きい塊を先に）
+    else for (var q = km.clusters.length - 1; q >= 0; q--) {
       var a = QC.kmAt(km.clusters[q], T, S);
       if (a) items.push(a);
     }

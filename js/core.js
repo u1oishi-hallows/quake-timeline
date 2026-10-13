@@ -624,6 +624,98 @@
     return { clusters: fit, K: K, active: active };
   }
 
+  // ---------------------------------------------------------------- k-means の累積（再生用）
+  // 時刻 T には「期間の始めから T までの地震 全部」を k 個にまとめる（過去の地震も T の時点の地震として扱い、消えない）。
+  // 決まった刻みの時刻（節目）ごとに、前の節目の中心から続けて k-means を回す（中心がなめらかに動き、マーカーが跳ばない）。
+  // 節目のあいだの時刻は、その前の節目の中心に、節目のあとに起きた地震を近い順に足す（その時刻より後の地震は使わない）。
+  /** 中心の数を k まで増やす：足りない分は、今の中心から遠い点ほど選ばれやすく（k-means++ と同じ）選ぶ */
+  function extendCenters(P, D, C0, k, r) {
+    var n = P.length / D, have = C0.length / D, C = new Float64Array(k * D), i, j, c;
+    C.set(C0.subarray ? C0.subarray(0, Math.min(have, k) * D) : C0.slice(0, Math.min(have, k) * D));
+    var d2 = new Float64Array(n).fill(Infinity);
+    for (c = 0; c < Math.min(have, k); c++) for (i = 0; i < n; i++) {
+      var d = 0;
+      for (j = 0; j < D; j++) { var e = P[i * D + j] - C[c * D + j]; d += e * e; }
+      if (d < d2[i]) d2[i] = d;
+    }
+    for (c = have; c < k; c++) {
+      var sum = 0;
+      for (i = 0; i < n; i++) sum += d2[i] === Infinity ? 1 : d2[i];
+      var u = r() * sum, pick = n - 1;
+      for (i = 0; i < n; i++) { u -= d2[i] === Infinity ? 1 : d2[i]; if (u <= 0) { pick = i; break; } }
+      for (j = 0; j < D; j++) C[c * D + j] = P[pick * D + j];
+      for (i = 0; i < n; i++) {
+        var dd = 0;
+        for (j = 0; j < D; j++) { var ee = P[i * D + j] - C[c * D + j]; dd += ee * ee; }
+        if (dd < d2[i]) d2[i] = dd;
+      }
+    }
+    return C;
+  }
+  /** 累積の k-means。job = { P, dim, ms, ids, ts（時刻順）, k, t0, t1, nk（節目の数） }。
+   *  返すもの：節目ごとに { t, end（その時刻までの地震の数）, C（中心）, n・E・maxI・mi（塊ごとの回数・エネルギー・最大の地震・中心に近い地震）} */
+  function kmCumSolve(job) {
+    var P = job.P, D = job.dim, ts = job.ts, ms = job.ms, ids = job.ids, n = ids.length, nk = Math.max(1, job.nk || 100);
+    var frames = [], prevC = null, r = rng(7);
+    for (var f = 0; f < nk; f++) {
+      var T = job.t0 + (job.t1 - job.t0) * (f + 1) / nk, m = lowerBoundT(ts, T, n);
+      if (!m) { frames.push({ t: T, end: 0, C: new Float64Array(0) }); continue; }
+      var kk = Math.min(job.k, m), cap = kk > 100 ? 8000 : 20000, stride = Math.max(1, Math.ceil(m / cap)), SP = P.subarray(0, m * D), q, j;
+      if (stride > 1) {
+        var mm = Math.floor(m / stride); SP = new Float64Array(mm * D);
+        for (q = 0; q < mm; q++) for (j = 0; j < D; j++) SP[q * D + j] = P[q * stride * D + j];
+      }
+      var init = prevC && prevC.length === kk * D ? prevC : prevC && prevC.length ? extendCenters(SP, D, prevC, kk, r) : null;
+      var C = kmeans(SP, D, kk, init ? { init: init, iters: 12 } : { seed: 7, iters: 30 });
+      frames.push(kmSummary(P, D, ms, ids, C, 0, m, T));
+      prevC = C;
+    }
+    return { frames: frames, P: P, dim: D, ms: ms, ids: ids, ts: ts, k: job.k, t0: job.t0, t1: job.t1 };
+  }
+  /** ts[0..n) のうち T 以下の数（時刻順） */
+  function lowerBoundT(ts, T, n) { var lo = 0, hi = n; while (lo < hi) { var m = (lo + hi) >> 1; if (ts[m] <= T) lo = m + 1; else hi = m; } return lo; }
+  /** 中心 C に点 [a, b) を割り当てた塊ごとのまとめ */
+  function kmSummary(P, D, ms, ids, C, a, b, T) {
+    var k = C.length / D, nn = new Int32Array(k), E = new Float64Array(k), maxI = new Int32Array(k).fill(-1), mx = new Float64Array(k).fill(-Infinity);
+    var mi = new Int32Array(k).fill(-1), bd = new Float64Array(k).fill(Infinity);
+    for (var i = a; i < b; i++) {
+      var c = nearest(P, i, D, C, k), d = _nd;
+      nn[c]++; E[c] += energyJ(ms[i]);
+      if (ms[i] > mx[c]) { mx[c] = ms[i]; maxI[c] = ids[i]; }
+      if (d < bd[c]) { bd[c] = d; mi[c] = ids[i]; }
+    }
+    return { t: T, end: b, C: C, n: nn, E: E, maxI: maxI, mi: mi, mx: mx, bd: bd };
+  }
+  /** 累積の k-means を時刻 T の姿に：T 以前の最後の節目の塊に、そのあと T までに起きた地震を近い中心へ足す。
+   *  T が最初の節目より前なら、T までの地震だけでその場でまとめる。塊ごとに { ev, n, E, meq, maxI, alpha: 1 }（回数 0 の塊は出さない） */
+  function kmCumAt(res, T) {
+    var F = res.frames, D = res.dim, j = -1;
+    for (var f = 0; f < F.length; f++) { if (F[f].t <= T) j = f; else break; }
+    var end = lowerBoundT(res.ts, T, res.ids.length), base;
+    if (j < 0 || !F[j].end) {
+      if (!end) return [];
+      var kk = Math.min(res.k, end), SP = res.P.subarray(0, end * D);
+      base = kmSummary(res.P, D, res.ms, res.ids, kmeans(SP, D, kk, { seed: 7, iters: 30 }), 0, end, T);
+    } else {
+      var b = F[j];
+      base = { C: b.C, n: Int32Array.from(b.n), E: Float64Array.from(b.E), maxI: Int32Array.from(b.maxI), mi: Int32Array.from(b.mi), mx: Float64Array.from(b.mx), bd: Float64Array.from(b.bd) };
+      var k = b.C.length / D;
+      for (var i = b.end; i < end; i++) {       // 節目のあとに起きた地震
+        var c = nearest(res.P, i, D, b.C, k), d = _nd;
+        base.n[c]++; base.E[c] += energyJ(res.ms[i]);
+        if (res.ms[i] > base.mx[c]) { base.mx[c] = res.ms[i]; base.maxI[c] = res.ids[i]; }
+        if (d < base.bd[c]) { base.bd[c] = d; base.mi[c] = res.ids[i]; }
+      }
+    }
+    var out = [];
+    for (var q = 0; q < base.n.length; q++) {
+      if (!base.n[q]) continue;
+      out.push({ ev: base.mi[q], n: base.n[q], E: base.E[q], meq: magOfEnergy(base.E[q]), maxI: base.maxI[q], alpha: 1 });
+    }
+    out.sort(function (x, y) { return x.E - y.E; });
+    return out;
+  }
+
   /** idx（時刻順）のうち、tLo < 時刻 ≦ tHi の地震の位置 [k0, k1) */
   function idxRange(ev, idx, tLo, tHi) {
     var lo = 0, hi = idx.length;
@@ -712,7 +804,7 @@
     intensityStyle: intensityStyle, colorOf: colorOf, styleOf: styleOf, ageColor: ageColor, alphas: alphas,
     visibleAt: visibleAt, depthLook: depthLook, energyJ: energyJ, magOfEnergy: magOfEnergy, formatEnergy: formatEnergy,
     SRCD_STEPS: SRCD_STEPS, SRC_GROUP_COLORS: SRC_GROUP_COLORS, SRC_FAR: SRC_FAR, SRCD_UNKNOWN: SRCD_UNKNOWN, srcFade: srcFade, desaturate: desaturate, srcStats: srcStats, srcAreaKm2: srcAreaKm2, SRC_MAX_KM: SRC_MAX_KM, srcPrepare: srcPrepare, srcDistance: srcDistance, srcLast: srcLast,
-    rng: rng, kmeans: kmeans, kmeansClusters: kmeansClusters, kmFit: kmFit, kmAt: kmAt, kmActiveMedian: kmActiveMedian, kmSolve: kmSolve, kmPoints: kmPoints, kmInitialK: kmInitialK, KM_MAX: KM_MAX, aggregate: aggregate, aggState: aggState, aggAdd: aggAdd, aggFinish: aggFinish, aggRadius: aggRadius, kOfLevel: kOfLevel, idxRange: idxRange, computeStats: computeStats, rotScreen: rotScreen, rotDelta: rotDelta,
+    rng: rng, kmeans: kmeans, kmeansClusters: kmeansClusters, kmFit: kmFit, kmAt: kmAt, kmActiveMedian: kmActiveMedian, kmSolve: kmSolve, kmPoints: kmPoints, kmInitialK: kmInitialK, kmCumSolve: kmCumSolve, kmCumAt: kmCumAt, extendCenters: extendCenters, KM_MAX: KM_MAX, aggregate: aggregate, aggState: aggState, aggAdd: aggAdd, aggFinish: aggFinish, aggRadius: aggRadius, kOfLevel: kOfLevel, idxRange: idxRange, computeStats: computeStats, rotScreen: rotScreen, rotDelta: rotDelta,
     screenXAzimuth: screenXAzimuth, dirName: dirName, depthTicks: depthTicks, project0: project0, estIntensity: estIntensity, INT_THRESHOLDS: INT_THRESHOLDS,
     RING_LEVELS: RING_LEVELS, ringRadiiKm: ringRadiiKm, sphereRadiusKm: sphereRadiusKm, geomSphereRadiusKm: geomSphereRadiusKm, surfaceRadiusKm: surfaceRadiusKm, pxPerKm: pxPerKm, dailyCounts: dailyCounts, timeTicks: timeTicks
   };
