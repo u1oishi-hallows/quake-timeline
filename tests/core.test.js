@@ -484,6 +484,23 @@ t('想定震源域からの距離：震源から面（升ごとの深さの幅�
   assert.ok(Math.abs(QC.srcAreaKm2(data.groups[0]) - 2 * cell35) < 1e-9);
   assert.ok(Math.abs(QC.srcAreaKm2({ grid: { lon0: 0, lat0: 60, step: 0.05, nx: 2, ny: 2, z: [-3, 10], w: [0] } }) - 0.05 * 111.32 * Math.cos(60.05 * Math.PI / 180) * 0.05 * 110.574) < 1e-9);
 });
+t('震源評価（df）：新しい見出しの CSV を読み、前の版（無し）とつなげる。深さ固定等（3・8・9）は既定で深さ不明に、深さ刻み（2）はそのまま', function () {
+  var a = QC.parseMonthCsv('t,lat,lon,dep,mag,maxi,src,q,aux,df\n1923-09-01T11:58:32.0,35.33,139.13,23,7.9,6,C,K,,\n1923-09-01T12:01:00.0,35.2,139.5,0,6.5,,C,K,,3\n');
+  var b = QC.parseMonthCsv('t,lat,lon,dep,mag,maxi,src,q,aux\n1923-09-02T00:00:00.0,35,139,10,5.0,,C,K,\n');
+  assert.deepStrictEqual([a.n, a.bad.length, Array.from(a.df), b.n, Array.from(b.df)], [2, 0, [0, 3], 1, [0]]);
+  var codes = QC.parseMonthCsv('t,lat,lon,dep,mag,maxi,src,q,aux,df\n1930-01-01T00:00:00.0,35,139,20,4.0,,C,K,1,2\n1930-01-02T00:00:00.0,35,139,30,4.0,,C,K,1,M\n1930-01-03T00:00:00.0,35,139,0,4.0,,C,K,1,9\n1930-01-04T00:00:00.0,35,139,0,4.0,,C,K,1,8\n');
+  assert.deepStrictEqual(Array.from(codes.df), [2, 10, 9, 8]);
+  assert.deepStrictEqual([0, 1, 2, 3, 5, 7, 8, 9, 10].map(QC.depthFixed), [false, false, false, true, false, false, true, true, false]);
+  assert.strictEqual(QC.parseMonthCsv('t,lat,lon,dep,mag,maxi,src,q,aux,df\n1923-09-02T00:00:00.0,35,139,10,5.0,,C,K,\n').bad.length, 1);   // 10 列の見出しに 9 列の行
+  var ev = QC.concatColumns([a, b]);
+  assert.deepStrictEqual(Array.from(ev.df), [0, 3, 0]);
+  assert.strictEqual(QC.applyFixedDepth(ev, false), 1);
+  assert.ok(ev.dep[0] === 23 && isNaN(ev.dep[1]) && ev.dep[2] === 10);
+  QC.applyFixedDepth(ev, true);
+  assert.deepStrictEqual(Array.from(ev.dep), [23, 0, 10]);
+  QC.applyFixedDepth(ev, false);
+  assert.ok(isNaN(ev.dep[1]) && ev.depRaw[1] === 0);       // 何度切り替えても元の深さは残る
+});
 t('時間の幅で切り出す：開始は含まず、終わり（T）は含む', function () {
   var ev = evOf(['2024-01-01T00:00:00.0,35,135,10,2,,P,,', '2024-01-02T00:00:00.0,35,135,10,2,,P,,',
                  '2024-01-03T00:00:00.0,35,135,10,2,,P,,', '2024-01-04T00:00:00.0,35,135,10,2,,P,,']);

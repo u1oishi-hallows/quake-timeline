@@ -12,11 +12,15 @@
   };
   var CREDIT = '出典：気象庁（震源データ・震源リスト・震度データベース）　地図：地理院タイル';
   // カタログの作り方が変わった時点（2026-10-11 にデータから実測）。期間がまたぐとグラフに線を引く
+  // 1919〜2023 年の確定版を数えて確かめた（2026-10-13）：M5以上は 1924 年以降 年およそ 70〜190 回で大きな段差が無い。
+  // M4以上・M3以上は 1983 年と 1997 年 10 月に段差がある（観測と処理が変わったため。地震が増えたのではない）
   var CATALOG_CHANGES = [
+    { t: '1983-01-01', label: '震源の数が増える（観測の変化）', note: '1983年から震源の数が増え、深さは1km刻みで求めるようになります（それまでは10km刻みなど）。1983年をまたいで回数を比べるならM5以上が目安です。' },
+    { t: '1997-10-01', label: '一元化（大学・防災科研の観測も合わせる）', note: '1997年10月から気象庁・大学・防災科研などの観測を合わせて震源を決める（一元化）ようになり、小さな地震の数が大きく増えます。1997年をまたいで回数を比べるならM5以上（2000年以降どうしならM4以上）が目安です。' },
     { t: '2016-04-01', label: '自動処理の震源が加わる', note: '2016年4月から自動処理で決めた震源が加わり、主に M1 未満の回数が増えています。年をまたいで回数を比べるなら M2 以上が目安です。' }];
 
   var DEFAULTS = {
-    srcShow: '', srcNearKm: 10,
+    srcShow: '', srcNearKm: 10, fixedDep: false,
     magMin: 1, intMin: 0, depMin: 0, depMax: 1000, lowFreq: true, reference: true, lfeOnly: false,
     colorMode: 'mag', sizeScale: 'exp', r1: 1.5, sizeGrowth: 1.7,
     life1: 3, lifeGrowth: 1.8, lifeMin: 1 / 24, lifeMax: 120,
@@ -34,7 +38,7 @@
   var NUM = ['magMin', 'intMin', 'depMin', 'depMax', 'r1', 'sizeGrowth', 'life1', 'lifeGrowth', 'lifeMax',
              'rippleMinM', 'step', 'fps', 'sphereAmp', 'sphereFade', 'sphereR5', 'sphereGrowth', 'ringMinM',
              'vol', 'viewH', 'dBlur', 'dHaze', 'hazeMin', 'keepBigM', 'bearing', 'aggLevel', 'kmDepthW', 'kmKmPerDay', 'aggCell', 'aggRatio', 'endSumSec', 'endStatsSec', 'srcNearKm'];
-  var BOOL = ['lowFreq', 'lfeOnly', 'reference', 'ripple', 'dShrink', 'keepBig', 'showXsec', 'showMt', 'chartView', 'endSeq'];
+  var BOOL = ['fixedDep', 'lowFreq', 'lfeOnly', 'reference', 'ripple', 'dShrink', 'keepBig', 'showXsec', 'showMt', 'chartView', 'endSeq'];
   var STR = ['colorMode', 'sizeScale', 'base', 't0', 't1', 'shape', 'sphereInt', 'sphereKind', 'ringFrom', 'xsDepth', 'mode', 'aggLabel', 'aggWindow', 'xsSize', 'aggMethod', 'srcShow'];
 
   var S = Object.assign({}, DEFAULTS);
@@ -113,6 +117,7 @@
       else if (!S.lfeOnly && S.lfeMagPrev != null) { S.magMin = S.lfeMagPrev; $('magMin').value = S.magMin; S.lfeMagPrev = null; }
       $('lfeNote').style.display = S.lfeOnly ? 'block' : 'none';
     }
+    if (k === 'fixedDep' && st.ev) { st.fixedN = QC.applyFixedDepth(st.ev, S.fixedDep); renderFixedNote(); rebuild(); renderChartBases(); }
     if (REFILTER.indexOf(k) >= 0) rebuild();
     else if (RELIFE.indexOf(k) >= 0) { computeLife(); }
     else if (RESPHERE.indexOf(k) >= 0) { computeSpheres(); }
@@ -343,6 +348,8 @@
       if (seq !== st.loadSeq) return;
       var parts = have.filter(function (m) { return st.cache[m]; }).map(function (m) { return st.cache[m]; });
       st.ev = parts.length ? QC.concatColumns(parts) : QC.concatColumns([]);
+      st.fixedN = QC.applyFixedDepth(st.ev, S.fixedDep);          // 深さ固定の地震：既定では深さ不明として扱う
+      renderFixedNote();
       var bad = parts.reduce(function (a, p) { return a + p.bad.length; }, 0);
       st.px = new Float64Array(st.ev.n); st.py = new Float64Array(st.ev.n);
       for (var i = 0; i < st.ev.n; i++) { var p = QC.project0(st.ev.lat[i], st.ev.lon[i]); st.px[i] = p[0]; st.py[i] = p[1]; }
@@ -1068,7 +1075,8 @@
         Math.round(st.sphS[kk]) + 'km（球の半径' + Math.round(st.sphR[kk]) + 'km）';
     }
     tip.textContent = QC.formatDateTime(ev.t[i]) + '　M' + ev.mag[i].toFixed(1) + '　深さ' +
-      (isNaN(dep) ? '不明' : (Math.round(dep * 10) / 10) + 'km') + '　観測' + QC.MAXI_LABEL[mx] +
+      (QC.depthFixed(ev.df[i]) ? (S.fixedDep ? Math.round(dep) + 'km（仮定の深さ）' : '不明（' + Math.round(ev.depRaw[i]) + 'km と仮定して震源を決めた）')
+        : isNaN(dep) ? '不明' : (Math.round(dep * 10) / 10) + 'km' + (ev.df[i] === 2 ? stepNote(ev.t[i]) : '')) + '　観測' + QC.MAXI_LABEL[mx] +
       '　（' + QC.SRC_LABEL[ev.src[i]] + '）' + sph + srcTip(i);
     tip.style.display = 'block';
     tip.style.left = Math.min(x + 12, rc.width - tip.offsetWidth - 4) + 'px';
@@ -1407,16 +1415,19 @@
     if (on) {
       if (S.mode === 'sum') { S.mode = 'time'; $('mode').value = 'time'; st.agg = null; applyShapeClass(); renderLegend(); }
       cancelEnding();
-      if (st.T >= st.t1) setT(st.t0);
+      // 終わり（期間の終わり、またはデータの最後）にいるときは、いちばん過去から。途中で止めたときは、その時刻から続ける
+      if (st.T >= playEnd() - S.step) setT(st.t0);
       st.lastTs = 0; requestAnimationFrame(tick);
     } else writeHash();
   }
+  /** 再生の終わり：期間の終わりか、データの最後（その先は地震が無いので再生しない）の早いほう */
+  function playEnd() { return Math.min(st.t1, st.dataEnd || st.t1); }
   function tick(ts) {
     if (!st.playing) return;
     if (st.lastTs) {
       var dt = Math.min((ts - st.lastTs) / 1000, 0.25);
       setT(st.T + S.step * S.fps * dt);
-      if (st.T >= st.t1) { play(false); startEnding(); return; }
+      if (st.T >= playEnd()) { setT(playEnd()); play(false); startEnding(); return; }
     }
     st.lastTs = ts;
     requestAnimationFrame(tick);
@@ -1469,6 +1480,17 @@
     return loadPeriod();
   }
 
+  /** 深さ刻み（震源評価 2）で求めた深さの刻み（気象庁のフォーマットの説明による） */
+  function stepNote(t) {
+    var y = +QC.formatDate(t).slice(0, 4);
+    return '（' + (y >= 1983 ? 1 : y >= 1961 && y <= 1966 ? 20 : 10) + 'km刻みで求めた深さ）';
+  }
+  /** 深さ固定の地震の数（読み込んだ期間）と扱い */
+  function renderFixedNote() {
+    var n = st.fixedN || 0, el = $('fixedNote');
+    if (!el) return;
+    el.textContent = '読み込んだ期間に ' + n.toLocaleString() + ' 回' + (n ? (S.fixedDep ? '（仮定の深さで描いている）' : '（深さ不明として、立体・断面図・深さの色・想定震源域からの距離では描かない）') : '');
+  }
   function renderDataNote() {
     var m = st.manifest, R = dataRange(), recent = (m.revisions || []).filter(function (r) {
       return Date.now() - QC.parseJst(r.at.slice(0, 16)) < 30 * DAY; });

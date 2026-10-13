@@ -238,6 +238,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
       <label class="chk"><input type="checkbox" id="lfeOnly"> 低周波地震だけを描く</label>
       <div class="note" id="lfeNote" style="display:none">低周波地震の印は確定版（2023年まで）にだけあります。2024年以降の速報では区別できないので描きません。低周波地震はほとんどが M1 未満なので、M の下限を −2 にしました（外すと元に戻します）。期間を2023年以前にしてください。</div>
       <label class="chk"><input type="checkbox" id="reference"> 精度の低い震源（参考）を含める</label>
+      <label class="chk"><input type="checkbox" id="fixedDep"> 深さ固定の地震を、仮定の深さで描く</label>
+      <div class="note">深さ固定＝深さを決められず、人の判断などで仮定した深さ（0km・10km など）で震源を決めた地震（確定版の震源評価 3・8・9）。既定では深さ不明として扱う。深さを刻み（1982年以前は10km、1961〜66年は20km）で求めた地震は、その深さで描く（吹き出しに刻みを書く）。<span id="fixedNote"></span></div>
       <div id="dropped"></div>
     </fieldset>
     <fieldset>
@@ -322,8 +324,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 <canvas id="statsCanvas" title="押すと閉じます"></canvas>
 <!-- 版の印（?v=）：js を変えたら上げる。公開ページは数分間 古い写しが残るので、新旧の js が混ざらないように -->
 <script src="vendor/leaflet.min.js"></script>
-<script src="js/core.js?v=20261013b"></script>
-<script src="js/app.js?v=20261013b"></script>
-<script src="js/view3d.js?v=20261013b"></script>
+<script src="js/core.js?v=20261013c"></script>
+<script src="js/app.js?v=20261013c"></script>
+<script src="js/view3d.js?v=20261013c"></script>
 </body>
 </html>

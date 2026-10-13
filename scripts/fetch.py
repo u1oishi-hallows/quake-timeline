@@ -118,26 +118,50 @@ def shindo_day(day):
 
 
 # ---------------------------------------------------------------- 確定版
+def hypo_files(y):
+    """その年の地震が入っている確定版のファイル（気象庁は古い年を何年分かまとめて置いている。2026-10-13 に一覧のページで確かめた）"""
+    if y < 1919:
+        raise ValueError('確定版の震源は 1919 年から')
+    for a, b in ((1919, 1950), (1951, 1960), (1961, 1966), (1967, 1982)):
+        if a <= y <= b:
+            return [str(a)]
+    if y == 1997:
+        return ['199701', '199710']     # 1997 年は 1〜9 月と 10〜12 月（一元化の始まり）に分かれている
+    return [str(y)]
+
+
 def cmd_catalog(store, y0, y1):
     bad = 0
+    cache = {}           # 何年分かまとめたファイルは 1 回だけ読む
     for y in range(int(y0), int(y1) + 1):
         try:
-            st, raw, hd = http(URL_HYPO_ZIP % y)
-            if st != 200:
-                raise RuntimeError('HTTP %s' % st)
-            zf = zipfile.ZipFile(io.BytesIO(raw))
-            byday, other = {}, 0
-            for name in zf.namelist():
-                for L in zf.read(name).decode('latin-1').splitlines():
-                    if not L.strip():
-                        continue
-                    r = jma.parse_hypo_line(L)
-                    if r is None:
-                        other += 1
-                        continue
-                    if r['t'][:4] != str(y):
-                        raise jma.FormatError('%s 年のファイルに %s が混ざっている' % (y, r['t']))
-                    byday.setdefault(r['t'][:10], []).append(r)
+            byday, other, skipped, sec_na, lm = {}, 0, {}, 0, []
+            for fid in hypo_files(y):
+                if fid not in cache:
+                    st, raw, hd = http(URL_HYPO_ZIP % fid)
+                    if st != 200:
+                        raise RuntimeError('%s HTTP %s' % (fid, st))
+                    zf = zipfile.ZipFile(io.BytesIO(raw))
+                    cache[fid] = ([zf.read(n).decode('latin-1') for n in zf.namelist()], hd.get('Last-Modified', ''))
+                texts, last = cache[fid]
+                lm.append(last)
+                for text in texts:
+                    for L in text.splitlines():
+                        if not L.strip() or L[1:5] != str(y):
+                            continue                 # まとめたファイルの、ほかの年の行
+                        try:
+                            r = jma.parse_hypo_line(L)
+                        except jma.SkipRecord as e:
+                            skipped[str(e)] = skipped.get(str(e), 0) + 1
+                            continue
+                        if r is None:
+                            other += 1
+                            continue
+                        if r['t'][:4] != str(y):
+                            raise jma.FormatError('%s 年の行の時刻が %s' % (y, r['t']))
+                        if r.pop('sec_na', False):
+                            sec_na += 1
+                        byday.setdefault(r['t'][:10], []).append(r)
             n = 0
             d = dt.date(y, 1, 1)
             while d.year == y:   # 地震の無い日も「確定で 0 件」として入れる
@@ -146,10 +170,14 @@ def cmd_catalog(store, y0, y1):
                 store.put_day(day, rows, 4, {'src': 'C'})
                 n += len(rows)
                 d += dt.timedelta(days=1)
+            dropped = {'気象庁以外の機関が決めた震源（U/I）': other}
+            dropped.update(skipped)
             store.manifest['years'][str(y)] = {
-                'src': 'C', 'rows': n, 'zip_last_modified': hd.get('Last-Modified', ''),
-                'dropped': {'気象庁以外の機関が決めた震源（U/I）': other}, 'fetched': now_jst()}
-            print('catalog %s: %d 件（気象庁以外 %d 件は除外）' % (y, n, other))
+                'src': 'C', 'rows': n, 'zip_last_modified': ' / '.join(lm), 'files': hypo_files(y),
+                'dropped': dropped, 'fetched': now_jst()}
+            if sec_na:
+                store.manifest['years'][str(y)]['notes'] = {'秒が不明（分までの時刻。0 秒として入れた）': sec_na}
+            print('catalog %s: %d 件（除外 %s）%s' % (y, n, dropped, '・秒が不明 %d 件' % sec_na if sec_na else ''))
         except Exception as e:  # 1 年分の失敗で全体を止めない
             bad += 1
             store.error('catalog %s' % y, e)

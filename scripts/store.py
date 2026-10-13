@@ -14,7 +14,9 @@ import io
 import json
 import os
 
-COLS = ['t', 'lat', 'lon', 'dep', 'mag', 'maxi', 'src', 'q', 'aux']
+COLS = ['t', 'lat', 'lon', 'dep', 'mag', 'maxi', 'src', 'q', 'aux', 'df']
+# 前の版の見出し（df＝深さ固定の印が無い）。読むときは df を空欄として足す。書くときはいつも COLS
+COLS_V1 = COLS[:9]
 RANK = {'C': 4, 'P': 3, 'I': 3, 'Q': 1}
 JST = dt.timezone(dt.timedelta(hours=9))
 
@@ -34,7 +36,7 @@ def _num(x, nd):
 
 def row_to_csv(r):
     return [r['t'], _num(r['lat'], 4), _num(r['lon'], 4), _num(r['dep'], 2),
-            '' if r['mag'] is None else '%.1f' % r['mag'], r['maxi'], r['src'], r['q'], r['aux']]
+            '' if r['mag'] is None else '%.1f' % r['mag'], r['maxi'], r['src'], r['q'], r['aux'], r.get('df', '')]
 
 
 class Store:
@@ -69,9 +71,11 @@ class Store:
                 with open(p, encoding='utf-8', newline='') as f:
                     rd = csv.reader(f)
                     head = next(rd)
-                    if head != COLS:
+                    if head not in (COLS, COLS_V1):
                         raise ValueError('%s の見出しが想定外: %r' % (p, head))
                     for line in rd:
+                        if head == COLS_V1:
+                            line = line + ['']
                         rows.setdefault(line[0][:10], []).append(line)
             self._months[ym] = rows
         return self._months[ym]
@@ -93,7 +97,8 @@ class Store:
             if x[0][:10] != day:
                 raise ValueError('%s の行に別の日 %s が混ざっている' % (day, x[0]))
         old = self._load_month(day[:7]).get(day, [])
-        if cur == rank and old and _digest(old) != _digest(new):
+        # 深さ固定の印（df）だけが増えた取り直し（前の版で溜めた分に印を付ける）は書き換わりとして記録しない
+        if cur == rank and old and _digest([r[:9] for r in old]) != _digest([r[:9] for r in new]):
             # 同じ出どころで中身が変わった（速報の書き換え）。黙って上書きせず記録する。
             self.manifest['revisions'].append({
                 'day': day, 'at': now_jst(), 'src': new[0][6] if new else '',
@@ -105,6 +110,7 @@ class Store:
         return True
 
     def save(self):
+        self.manifest['columns'] = COLS
         for ym, days in self._months.items():
             rows = [r for d in sorted(days) for r in days[d]]
             p = self._mfile(ym)

@@ -62,28 +62,31 @@
   var SRC_LABEL = ['確定', '速報', '震度DBのみ', '発表直後'];
   /** 月の CSV → 列ごとの配列。読めない行は捨てずに数えて返す。 */
   function parseMonthCsv(text) {
-    var lines = text.split('\n');
-    if (lines[0] !== 't,lat,lon,dep,mag,maxi,src,q,aux') throw new Error('CSVの見出しが想定外: ' + lines[0]);
+    var lines = text.split('\n'), H1 = 't,lat,lon,dep,mag,maxi,src,q,aux', H2 = H1 + ',df';
+    // 見出しは 2 通り：df（確定版の震源評価：1 深さフリー・2 深さ刻み・3 深さ固定等・8 決定不能・9 震源固定 など、M＝Matched Filter）がある版と、
+    // 無い前の版（無ければ不明＝0）
+    if (lines[0] !== H1 && lines[0] !== H2) throw new Error('CSVの見出しが想定外: ' + lines[0]);
+    var ncol = lines[0] === H2 ? 10 : 9;
     var n = 0, cap = lines.length;
     var t = new Float64Array(cap), lat = new Float32Array(cap), lon = new Float32Array(cap),
         dep = new Float32Array(cap), mag = new Float32Array(cap), maxi = new Int8Array(cap),
-        src = new Int8Array(cap), q = new Array(cap), aux = new Int8Array(cap), bad = [];
+        src = new Int8Array(cap), q = new Array(cap), aux = new Int8Array(cap), df = new Int8Array(cap), bad = [];
     for (var i = 1; i < lines.length; i++) {
       var L = lines[i];
       if (!L) continue;
       var c = L.split(',');
       var tt = parseJst(c[0]), la = +c[1], lo = +c[2];
-      if (c.length !== 9 || isNaN(tt) || !c[1] || !c[2] || !isFinite(la) || !isFinite(lo) ||
+      if (c.length !== ncol || isNaN(tt) || !c[1] || !c[2] || !isFinite(la) || !isFinite(lo) ||
           !(c[5] in MAXI) || !(c[6] in SRC)) { bad.push(i + 1); continue; }
       t[n] = tt; lat[n] = la; lon[n] = lo;
       dep[n] = c[3] === '' ? NaN : +c[3];
       mag[n] = c[4] === '' ? NaN : +c[4];
-      maxi[n] = MAXI[c[5]]; src[n] = SRC[c[6]]; q[n] = c[7]; aux[n] = c[8] === '' ? 0 : +c[8];
+      maxi[n] = MAXI[c[5]]; src[n] = SRC[c[6]]; q[n] = c[7]; aux[n] = c[8] === '' ? 0 : +c[8]; df[n] = ncol === 10 && c[9] ? (c[9] === 'M' ? 10 : +c[9] || 0) : 0;
       n++;
     }
     return { n: n, t: t.subarray(0, n), lat: lat.subarray(0, n), lon: lon.subarray(0, n),
              dep: dep.subarray(0, n), mag: mag.subarray(0, n), maxi: maxi.subarray(0, n),
-             src: src.subarray(0, n), q: q.slice(0, n), aux: aux.subarray(0, n), bad: bad };
+             src: src.subarray(0, n), q: q.slice(0, n), aux: aux.subarray(0, n), df: df.subarray(0, n), bad: bad };
   }
   /** 月ごとの列をつなぐ（時刻順であることを確かめる） */
   function concatColumns(parts) {
@@ -91,15 +94,27 @@
     parts.forEach(function (p) { n += p.n; });
     var o = { n: n, t: new Float64Array(n), lat: new Float32Array(n), lon: new Float32Array(n),
               dep: new Float32Array(n), mag: new Float32Array(n), maxi: new Int8Array(n),
-              src: new Int8Array(n), q: new Array(n), aux: new Int8Array(n) };
+              src: new Int8Array(n), q: new Array(n), aux: new Int8Array(n), df: new Int8Array(n) };
     var at = 0;
     parts.forEach(function (p) {
-      ['t', 'lat', 'lon', 'dep', 'mag', 'maxi', 'src', 'aux'].forEach(function (f) { o[f].set(p[f], at); });
+      ['t', 'lat', 'lon', 'dep', 'mag', 'maxi', 'src', 'aux', 'df'].forEach(function (f) { o[f].set(p[f], at); });
       for (k = 0; k < p.n; k++) o.q[at + k] = p.q[k];
       at += p.n;
     });
+    o.depRaw = o.dep.slice();      // 深さ固定を「不明」にする前の深さ（applyFixedDepth で dep を作り直す）
     for (k = 1; k < n; k++) if (o.t[k] < o.t[k - 1]) throw new Error('時刻順に並んでいない: ' + k);
     return o;
+  }
+  /** 深さを決められなかった地震（震源評価 3 深さ固定等・8 決定不能・9 震源固定）か */
+  function depthFixed(code) { return code === 3 || code === 8 || code === 9; }
+  /** 深さ固定の地震の深さ：use なら仮定の深さのまま、そうでなければ不明（NaN）にする。数を返す */
+  function applyFixedDepth(ev, use) {
+    var n = 0;
+    for (var i = 0; i < ev.n; i++) {
+      if (depthFixed(ev.df[i])) { n++; ev.dep[i] = use ? ev.depRaw[i] : NaN; }
+      else ev.dep[i] = ev.depRaw[i];
+    }
+    return n;
   }
   /** t[i] >= x となる最初の i */
   function lowerBound(arr, x, lo, hi) {
@@ -691,7 +706,7 @@
     JST: JST, HOUR: HOUR, DAY: DAY, parseJst: parseJst, jstParts: jstParts, formatClock: formatClock,
     formatDate: formatDate, formatDateTime: formatDateTime, dateToMs: dateToMs, floorDayJst: floorDayJst,
     monthsBetween: monthsBetween, MAXI: MAXI, MAXI_LABEL: MAXI_LABEL, SRC: SRC, SRC_LABEL: SRC_LABEL,
-    parseMonthCsv: parseMonthCsv, concatColumns: concatColumns, lowerBound: lowerBound,
+    parseMonthCsv: parseMonthCsv, concatColumns: concatColumns, applyFixedDepth: applyFixedDepth, depthFixed: depthFixed, lowerBound: lowerBound,
     filterEvents: filterEvents, radius: radius, lifeMs: lifeMs, MAG_COLORS: MAG_COLORS,
     DEP_COLORS: DEP_COLORS, DEP_UNKNOWN: DEP_UNKNOWN, INT_STYLES: INT_STYLES, INT_UNKNOWN: INT_UNKNOWN,
     intensityStyle: intensityStyle, colorOf: colorOf, styleOf: styleOf, ageColor: ageColor, alphas: alphas,

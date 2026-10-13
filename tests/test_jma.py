@@ -40,16 +40,19 @@ class Hypo(unittest.TestCase):
         self.assertEqual(r['mag'], 6.5)
         self.assertEqual(r['maxi'], '6+')
         self.assertEqual((r['src'], r['q'], r['aux']), ('C', 'K', '1'))
+        self.assertEqual(r['df'], '1')                      # 震源評価 1＝深さフリー
 
     def test_fixed_depth_and_blank_mag(self):
         r = jma.parse_hypo_line(self.lines[1])
         self.assertEqual(r['dep'], 0.0)
+        self.assertEqual(r['df'], self.lines[1][59].strip())  # 震源評価をそのまま
         self.assertIsNone(r['mag'])
         self.assertEqual(r['maxi'], '')
 
     def test_fixed_depth_nonzero(self):
         r = jma.parse_hypo_line(self.lines[6])  # 深さ欄 ' 50  '（I3,2X）
         self.assertEqual(r['dep'], 50.0)
+        self.assertEqual(r['df'], self.lines[6][59].strip())
         self.assertEqual(r['mag'], 0.3)
         self.assertEqual(r['t'], '2023-01-01T00:08:01.5')
 
@@ -78,6 +81,31 @@ class Hypo(unittest.TestCase):
     def test_other_agency_and_south(self):
         self.assertIsNone(jma.parse_hypo_line(self.lines[4]))
         self.assertAlmostEqual(jma._deg('-14', 56.80), -(14 + 56.8 / 60))
+
+    def test_old_records(self):
+        # 1919 年：秒が空欄 → 分までの時刻（0 秒）、印を付ける。深さ '4700 '＝470km（空白は 0。震度データベースの深さと突き合わせ済み）
+        r = jma.parse_hypo_line('J191906130006         294792 492 139387516404700    54D   571   8331NEAR TORISHIMA IS         5S')
+        self.assertEqual(r['t'], '1919-06-13T00:06:00.0')
+        self.assertTrue(r['sec_na'])
+        self.assertEqual((r['dep'], r['mag'], r['df'], r['q']), (470.0, 5.4, '7', 'S'))    # 震源評価 7＝参考
+        self.assertAlmostEqual(r['lat'], 29 + 47.92 / 60, places=6)
+        # 古い年の深さの書き方（震度データベースの深さと突き合わせた）：'1720 '＝172km、' 880 '＝88km、'  78 '＝7.8km、' 15  '＝15km（整数）
+        for raw, dep in [('1720 ', 172.0), (' 880 ', 88.0), ('  78 ', 7.8), (' 15  ', 15.0), ('  0  ', 0.0), ('357  ', 357.0)]:
+            L = 'J1919010518532883 087 372982 273 1383601 165' + raw + '         5711  4132MID NIIGATA PREF          5S'
+            self.assertEqual(len(L), 96)
+            r = jma.parse_hypo_line(L)
+            self.assertEqual((r['dep'], r['df']), (dep, '7'), raw)
+        # 秒がある行には印が無い
+        r = jma.parse_hypo_line('J1919010518532883 087 372982 273 1383601 165  4           5711  4132MID NIIGATA PREF          5S')
+        self.assertEqual(r['t'], '1919-01-05T18:53:28.8')
+        self.assertEqual((r['dep'], r['df']), (4.0, '7'))       # 震源評価 7＝参考
+        self.assertNotIn('sec_na', r)
+        self.assertIsNone(r['mag'])
+        # 緯度（または経度）が度まで：もっともらしい位置に出さないよう、理由を付けて捨てる
+        with self.assertRaises(jma.SkipRecord):
+            jma.parse_hypo_line('J192309011201         35         13930        0     65J    325Y     SAGAMI BAY ?              5K')
+        with self.assertRaises(jma.SkipRecord):
+            jma.parse_hypo_line('J192501182105         47         154         60     74J    322      CENTRAL KURILE IS          K')
 
     def test_bad_record(self):
         with self.assertRaises(jma.FormatError):
@@ -222,6 +250,36 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(st2.day_rows('2024-01-01')[0][6], 'C')
         self.assertEqual(st2.day_rows('2024-01-02')[0][4], '1.2')
         self.assertEqual(st2.manifest['months']['2024-01']['rows'], 2)
+
+    def test_old_header_and_depth_fixed(self):
+        # 前の版の見出し（df が無い 9 列）の月も読め、書き直すと 10 列になる。df だけが増えた取り直しは書き換わりにしない
+        os.makedirs(os.path.join(self.tmp, 'data', 'events', '2015'))
+        with open(os.path.join(self.tmp, 'data', 'events', '2015', '2015-01.csv'), 'w', encoding='utf-8') as f:
+            f.write('t,lat,lon,dep,mag,maxi,src,q,aux\n2015-01-01T00:00:01.0,35,135,10,1.0,,C,,\n')
+        st = Store(self.tmp)
+        self.assertEqual(st.day_rows('2015-01-01')[0][9], '')
+        r = dict(_row('2015-01-01T00:00:01.0', 'C'), df='1')
+        st.put_day('2015-01-01', [r], 4, {'src': 'C'})
+        self.assertEqual(st.manifest['revisions'], [])
+        st.save()
+        with open(os.path.join(self.tmp, 'data', 'events', '2015', '2015-01.csv'), encoding='utf-8') as f:
+            self.assertEqual(f.read().splitlines(), ['t,lat,lon,dep,mag,maxi,src,q,aux,df', '2015-01-01T00:00:01.0,35,135,10,1.0,,C,,,1'])
+        # 中身が変わったときは、これまでどおり記録する
+        st.put_day('2015-01-01', [dict(r, mag=2.0)], 4, {'src': 'C'})
+        self.assertEqual(len(st.manifest['revisions']), 1)
+
+    def test_hypo_files(self):
+        import fetch
+        self.assertEqual(fetch.hypo_files(1919), ['1919'])
+        self.assertEqual(fetch.hypo_files(1950), ['1919'])
+        self.assertEqual(fetch.hypo_files(1951), ['1951'])
+        self.assertEqual(fetch.hypo_files(1966), ['1961'])
+        self.assertEqual(fetch.hypo_files(1982), ['1967'])
+        self.assertEqual(fetch.hypo_files(1983), ['1983'])
+        self.assertEqual(fetch.hypo_files(1997), ['199701', '199710'])
+        self.assertEqual(fetch.hypo_files(2011), ['2011'])
+        with self.assertRaises(ValueError):
+            fetch.hypo_files(1911)
 
     def test_wrong_day_rejected(self):
         st = Store(self.tmp)

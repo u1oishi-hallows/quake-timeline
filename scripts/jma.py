@@ -57,8 +57,18 @@ def hypo_mag(s):
     return int(s.replace(' ', '0')) / 10
 
 
+class SkipRecord(Exception):
+    """読めるが地図に置けない行（理由を数えて捨てる）"""
+
+
 def parse_hypo_line(L):
-    """確定版の 1 行。気象庁以外（U/I）の震源は None を返す（呼び出し側で数える）。"""
+    """確定版の 1 行。気象庁以外（U/I）の震源は None を返す（呼び出し側で数える）。
+    古い年（1919〜）には次の行がある:
+      秒が空欄 … 時刻は分まで。0 秒として入れ、sec_na を付ける（呼び出し側で数える）
+      緯度・経度の分が空欄 … 位置が度まで（最大 100km ほどずれる）なので SkipRecord（もっともらしい位置に出さない）
+    df：震源評価（60 桁目、震源を決めるときの条件）。1 深さフリー・2 深さ刻み（1926〜1960・1967〜1982年は 10km、1961〜1966年は 20km、
+        1983年からは 1km 刻みで最適解）・3 深さ固定等（人の判断）・4 Depth Phase・5 S-P・7 参考・8 決定不能・9 震源固定・M Matched Filter、空白は不明。
+        深さの欄が整数（I3,2X）なのは 3・9 だけでなく 2 も（2026-10-13 に気象庁のフォーマットの説明と、年ごとの数で確かめた）"""
     L = L.rstrip('\r\n')
     if len(L) < 96:
         L = L.ljust(96)
@@ -66,18 +76,27 @@ def parse_hypo_line(L):
         if L[0] in 'UI':
             return None
         raise FormatError('レコード種別が想定外: %r' % L[:20])
+    if not L[24:28].strip() or not L[36:40].strip():
+        raise SkipRecord('位置が度までしか無い（緯度・経度の分が空欄）')
     sec = _fnum(L[13:17], 2)
+    sec_na = sec is None
+    if sec_na:
+        sec = 0.0
     lat = _deg(L[21:24], _fnum(L[24:28], 2))
     lon = _deg(L[32:36], _fnum(L[36:40], 2))
     dep = _fnum(L[44:49], 2)      # F5.2 深さフリー／I3,2X 深さ固定（小数部が空欄）の両方
     maxi = HYPO_MAXI.get(L[61])
     if maxi is None:
         raise FormatError('最大震度の欄が想定外: %r' % L[61])
-    return {
+    r = {
         't': '%s-%s-%sT%s:%s:%04.1f' % (L[1:5], L[5:7], L[7:9], L[9:11], L[11:13], _round1(sec)),
         'lat': lat, 'lon': lon, 'dep': dep, 'mag': hypo_mag(L[52:54]),
         'maxi': maxi, 'src': 'C', 'q': L[95].strip(), 'aux': L[60].strip(),
+        'df': L[59].strip(),
     }
+    if sec_na:
+        r['sec_na'] = True
+    return r
 
 
 def _deg(d, m):
