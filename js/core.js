@@ -391,15 +391,21 @@
   }
   /** D 次元の k-means の中心を求める。P は点を並べた配列（n×D、[x0,y0,z0,t0, x1,…]）。
    *  init（前の中心、k×D）があればそこから続ける。無ければ種を決めた k-means++ で始める。戻り値は中心（k×D） */
+  /** k-means（k-means++ で始める）。opt.w を渡すと重み付き：始めの点は重み×距離²に比例して選び、中心は重み付きの平均 */
   function kmeans(P, D, k, opt) {
     opt = opt || {};
-    var n = P.length / D, c, i, j;
+    var n = P.length / D, c, i, j, w = opt.w || null;
     k = Math.min(k, n);
     var C = new Float64Array(k * D);
     if (!k) return C;
     if (opt.init && opt.init.length === k * D) C.set(opt.init);
     else {
       var r = rng(opt.seed || 1), d2 = new Float64Array(n).fill(Infinity), f = Math.floor(r() * n);
+      if (w) {                      // 重み付き：最初の点も重みに比例して選ぶ
+        var tw = 0; for (i = 0; i < n; i++) tw += w[i];
+        var u0 = (f / n) * tw; f = n - 1;
+        for (i = 0; i < n; i++) { u0 -= w[i]; if (u0 <= 0) { f = i; break; } }
+      }
       for (j = 0; j < D; j++) C[j] = P[f * D + j];
       for (c = 1; c < k; c++) {
         var sum = 0;
@@ -407,15 +413,15 @@
           var d = 0;
           for (j = 0; j < D; j++) { var e = P[i * D + j] - C[(c - 1) * D + j]; d += e * e; }
           if (d < d2[i]) d2[i] = d;
-          sum += d2[i];
+          sum += w ? w[i] * d2[i] : d2[i];
         }
         var pick = n - 1;
-        if (sum > 0) { var u = r() * sum; for (i = 0; i < n; i++) { u -= d2[i]; if (u <= 0) { pick = i; break; } } }
+        if (sum > 0) { var u = r() * sum; for (i = 0; i < n; i++) { u -= w ? w[i] * d2[i] : d2[i]; if (u <= 0) { pick = i; break; } } }
         else pick = Math.floor(r() * n);
         for (j = 0; j < D; j++) C[c * D + j] = P[pick * D + j];
       }
     }
-    var assign = new Int32Array(n).fill(-1), sum2 = new Float64Array(k * D), cnt = new Int32Array(k);
+    var assign = new Int32Array(n).fill(-1), sum2 = new Float64Array(k * D), cnt = new Float64Array(k);
     for (var it = 0; it < (opt.iters || 25); it++) {
       var changed = 0;
       for (i = 0; i < n; i++) {
@@ -424,10 +430,41 @@
       }
       if (!changed) break;
       sum2.fill(0); cnt.fill(0);
-      for (i = 0; i < n; i++) { cnt[assign[i]]++; for (j = 0; j < D; j++) sum2[assign[i] * D + j] += P[i * D + j]; }
-      for (c = 0; c < k; c++) if (cnt[c]) for (j = 0; j < D; j++) C[c * D + j] = sum2[c * D + j] / cnt[c];   // 空の塊は中心をそのまま
+      for (i = 0; i < n; i++) { var wi = w ? w[i] : 1; cnt[assign[i]] += wi; for (j = 0; j < D; j++) sum2[assign[i] * D + j] += wi * P[i * D + j]; }
+      for (c = 0; c < k; c++) if (cnt[c] > 0) for (j = 0; j < D; j++) C[c * D + j] = sum2[c * D + j] / cnt[c];   // 空の塊は中心をそのまま
     }
     return C;
+  }
+  /** まとめ方の重み：'gr'＝10^M（M が 1 増えるごとに 10 倍。数が 1/10 になるのを打ち消し、どの M の帯も同じくらい効く）、
+   *  'energy'＝10^(1.5M)（エネルギーに比例）、それ以外は重みなし（null＝どの地震も 1）。M 不明は M0 として */
+  function kmWeights(ms, mode) {
+    if (mode !== 'gr' && mode !== 'energy') return null;
+    var a = mode === 'gr' ? 1 : 1.5, w = new Float64Array(ms.length);
+    for (var i = 0; i < ms.length; i++) w[i] = Math.pow(10, a * ((isNaN(ms[i]) ? 0 : ms[i]) - 2));
+    return w;
+  }
+  /** 中心を求めるのに使う点を選ぶ（多いときは間引く）。重みなしは等間隔（これまでどおり）。
+   *  重み付きは、重いほうから cap/4 個を必ず残し（間引きで大きな地震が落ちて結果が変わらないように）、残りは等間隔に選んで重みを間引いた割合だけ増やす */
+  function sampleFit(P, D, n, cap, w) {
+    var stride = Math.max(1, Math.ceil(n / cap)), q, j;
+    if (stride === 1) return { P: P.length === n * D ? P : P.subarray(0, n * D), w: w ? w.subarray(0, n) : null };
+    if (!w) {
+      var m = Math.floor(n / stride), SP = new Float64Array(m * D);
+      for (q = 0; q < m; q++) for (j = 0; j < D; j++) SP[q * D + j] = P[q * stride * D + j];
+      return { P: SP, w: null };
+    }
+    var h = Math.floor(cap / 4), order = Array.from({ length: n }, function (_, i) { return i; });
+    order.sort(function (a, b) { return w[b] - w[a] || a - b; });
+    var keep = new Uint8Array(n), pick = [], ww = [];
+    for (q = 0; q < Math.min(h, n); q++) { keep[order[q]] = 1; pick.push(order[q]); ww.push(w[order[q]]); }
+    var st2 = Math.max(1, Math.ceil((n - pick.length) / (cap - pick.length))), restW = 0, sampW = 0, rest = [];
+    for (q = 0; q < n; q++) if (!keep[q]) { restW += w[q]; if ((q % st2) === 0) { rest.push(q); sampW += w[q]; } }
+    var scale = sampW > 0 ? restW / sampW : 1;       // 残りの重みの合計が変わらないように
+    rest.forEach(function (q2) { pick.push(q2); ww.push(w[q2] * scale); });
+    pick = pick.map(function (q2, k) { return [q2, ww[k]]; }).sort(function (a, b) { return a[0] - b[0]; });
+    var SP2 = new Float64Array(pick.length * D), SW = new Float64Array(pick.length);
+    pick.forEach(function (x, k) { for (var jj = 0; jj < D; jj++) SP2[k * D + jj] = P[x[0] * D + jj]; SW[k] = x[1]; });
+    return { P: SP2, w: SW };
   }
   var _nd = 0;
   function nearest(P, i, D, C, k) {
@@ -545,14 +582,9 @@
   // ---------------------------------------------------------------- k-means の一式（画面とは別の計算場所 js/kmworker.js でも同じものを使う）
   /** 中心を求め（多いときは等間隔に間引いた点で）、全部の点を割り当て、再生用の累積を作る。
    *  P は点の座標（dim 次元）、ms は M、ids は地震の番号、ts は発生時刻（時刻順に並んでいること） */
-  function kmFit(P, dim, ms, ids, ts, K) {
-    var n = ids.length, cap = K > 100 ? 8000 : 20000;
-    var stride = Math.max(1, Math.ceil(n / cap)), SP = P, q;
-    if (stride > 1) {
-      var m = Math.floor(n / stride); SP = new Float64Array(m * dim);
-      for (q = 0; q < m; q++) for (var j = 0; j < dim; j++) SP[q * dim + j] = P[q * stride * dim + j];
-    }
-    var C = kmeans(SP, dim, K, { seed: 7, iters: K > 100 ? 20 : 30 }), cl = kmeansClusters(P, dim, ms, ids, C);
+  function kmFit(P, dim, ms, ids, ts, K, wmode) {
+    var n = ids.length, cap = K > 100 ? 8000 : 20000, fit = sampleFit(P, dim, n, cap, kmWeights(ms, wmode));
+    var C = kmeans(fit.P, dim, K, { seed: 7, iters: K > 100 ? 20 : 30, w: fit.w }), cl = kmeansClusters(P, dim, ms, ids, C);
     cl.forEach(function (g) {
       // 塊の広がり（東西・南北だけ、km）と、再生用の「その時刻までの」累積（members は時刻順）
       var ss = 0, L = g.members.length, best = Infinity, bi = -1, mx = -Infinity, mxi = -1, E = 0;
@@ -615,11 +647,11 @@
   /** まとめる一式。job = { P, dim, ms, ids, ts, k（目標の数）, K（初めの塊の数）, t0, t1, s }。
    *  4 次元（再生）では、同時に見える数が目標の ±15% を外れたら、外れた割合だけ塊の数を変えて 1 回だけまとめ直す */
   function kmSolve(job) {
-    var k = job.k, K = job.K, fit = kmFit(job.P, job.dim, job.ms, job.ids, job.ts, K);
+    var k = job.k, K = job.K, fit = kmFit(job.P, job.dim, job.ms, job.ids, job.ts, K, job.wmode);
     var active = job.dim === 4 ? kmActiveMedian(fit, job.t0, job.t1, job.s) : fit.length;
     if (job.dim === 4 && (active < 0.85 * k || active > 1.15 * k) && !(active < k && K >= KM_MAX)) {
       K = Math.min(KM_MAX, Math.max(k, Math.round(K * k / Math.max(active, 1))));
-      fit = kmFit(job.P, job.dim, job.ms, job.ids, job.ts, K); active = kmActiveMedian(fit, job.t0, job.t1, job.s);
+      fit = kmFit(job.P, job.dim, job.ms, job.ids, job.ts, K, job.wmode); active = kmActiveMedian(fit, job.t0, job.t1, job.s);
     }
     return { clusters: fit, K: K, active: active };
   }
@@ -629,7 +661,7 @@
   // 決まった刻みの時刻（節目）ごとに、前の節目の中心から続けて k-means を回す（中心がなめらかに動き、マーカーが跳ばない）。
   // 節目のあいだの時刻は、その前の節目の中心に、節目のあとに起きた地震を近い順に足す（その時刻より後の地震は使わない）。
   /** 中心の数を k まで増やす：足りない分は、今の中心から遠い点ほど選ばれやすく（k-means++ と同じ）選ぶ */
-  function extendCenters(P, D, C0, k, r) {
+  function extendCenters(P, D, C0, k, r, w) {
     var n = P.length / D, have = C0.length / D, C = new Float64Array(k * D), i, j, c;
     C.set(C0.subarray ? C0.subarray(0, Math.min(have, k) * D) : C0.slice(0, Math.min(have, k) * D));
     var d2 = new Float64Array(n).fill(Infinity);
@@ -640,9 +672,9 @@
     }
     for (c = have; c < k; c++) {
       var sum = 0;
-      for (i = 0; i < n; i++) sum += d2[i] === Infinity ? 1 : d2[i];
+      for (i = 0; i < n; i++) sum += (w ? w[i] : 1) * (d2[i] === Infinity ? 1 : d2[i]);
       var u = r() * sum, pick = n - 1;
-      for (i = 0; i < n; i++) { u -= d2[i] === Infinity ? 1 : d2[i]; if (u <= 0) { pick = i; break; } }
+      for (i = 0; i < n; i++) { u -= (w ? w[i] : 1) * (d2[i] === Infinity ? 1 : d2[i]); if (u <= 0) { pick = i; break; } }
       for (j = 0; j < D; j++) C[c * D + j] = P[pick * D + j];
       for (i = 0; i < n; i++) {
         var dd = 0;
@@ -655,22 +687,18 @@
   /** 累積の k-means。job = { P, dim, ms, ids, ts（時刻順）, k, t0, t1, nk（節目の数） }。
    *  返すもの：節目ごとに { t, end（その時刻までの地震の数）, C（中心）, n・E・maxI・mi（塊ごとの回数・エネルギー・最大の地震・中心に近い地震）} */
   function kmCumSolve(job) {
-    var P = job.P, D = job.dim, ts = job.ts, ms = job.ms, ids = job.ids, n = ids.length, nk = Math.max(1, job.nk || 100);
+    var P = job.P, D = job.dim, ts = job.ts, ms = job.ms, ids = job.ids, n = ids.length, nk = Math.max(1, job.nk || 100), W = kmWeights(ms, job.wmode);
     var frames = [], prevC = null, r = rng(7);
     for (var f = 0; f < nk; f++) {
       var T = job.t0 + (job.t1 - job.t0) * (f + 1) / nk, m = lowerBoundT(ts, T, n);
       if (!m) { frames.push({ t: T, end: 0, C: new Float64Array(0) }); continue; }
-      var kk = Math.min(job.k, m), cap = kk > 100 ? 8000 : 20000, stride = Math.max(1, Math.ceil(m / cap)), SP = P.subarray(0, m * D), q, j;
-      if (stride > 1) {
-        var mm = Math.floor(m / stride); SP = new Float64Array(mm * D);
-        for (q = 0; q < mm; q++) for (j = 0; j < D; j++) SP[q * D + j] = P[q * stride * D + j];
-      }
-      var init = prevC && prevC.length === kk * D ? prevC : prevC && prevC.length ? extendCenters(SP, D, prevC, kk, r) : null;
-      var C = kmeans(SP, D, kk, init ? { init: init, iters: 12 } : { seed: 7, iters: 30 });
+      var kk = Math.min(job.k, m), fit = sampleFit(P, D, m, kk > 100 ? 8000 : 20000, W ? W.subarray(0, m) : null), SP = fit.P;
+      var init = prevC && prevC.length === kk * D ? prevC : prevC && prevC.length ? extendCenters(SP, D, prevC, kk, r, fit.w) : null;
+      var C = kmeans(SP, D, kk, init ? { init: init, iters: 12, w: fit.w } : { seed: 7, iters: 30, w: fit.w });
       frames.push(kmSummary(P, D, ms, ids, C, 0, m, T));
       prevC = C;
     }
-    return { frames: frames, P: P, dim: D, ms: ms, ids: ids, ts: ts, k: job.k, t0: job.t0, t1: job.t1 };
+    return { frames: frames, P: P, dim: D, ms: ms, ids: ids, ts: ts, k: job.k, t0: job.t0, t1: job.t1, wmode: job.wmode || '' };
   }
   /** ts[0..n) のうち T 以下の数（時刻順） */
   function lowerBoundT(ts, T, n) { var lo = 0, hi = n; while (lo < hi) { var m = (lo + hi) >> 1; if (ts[m] <= T) lo = m + 1; else hi = m; } return lo; }
@@ -694,8 +722,8 @@
     var end = lowerBoundT(res.ts, T, res.ids.length), base;
     if (j < 0 || !F[j].end) {
       if (!end) return [];
-      var kk = Math.min(res.k, end), SP = res.P.subarray(0, end * D);
-      base = kmSummary(res.P, D, res.ms, res.ids, kmeans(SP, D, kk, { seed: 7, iters: 30 }), 0, end, T);
+      var kk = Math.min(res.k, end), SP = res.P.subarray(0, end * D), W0 = kmWeights(res.ms, res.wmode);
+      base = kmSummary(res.P, D, res.ms, res.ids, kmeans(SP, D, kk, { seed: 7, iters: 30, w: W0 ? W0.subarray(0, end) : null }), 0, end, T);
     } else {
       var b = F[j];
       base = { C: b.C, n: Int32Array.from(b.n), E: Float64Array.from(b.E), maxI: Int32Array.from(b.maxI), mi: Int32Array.from(b.mi), mx: Float64Array.from(b.mx), bd: Float64Array.from(b.bd) };
@@ -804,7 +832,7 @@
     intensityStyle: intensityStyle, colorOf: colorOf, styleOf: styleOf, ageColor: ageColor, alphas: alphas,
     visibleAt: visibleAt, depthLook: depthLook, energyJ: energyJ, magOfEnergy: magOfEnergy, formatEnergy: formatEnergy,
     SRCD_STEPS: SRCD_STEPS, SRC_GROUP_COLORS: SRC_GROUP_COLORS, SRC_FAR: SRC_FAR, SRCD_UNKNOWN: SRCD_UNKNOWN, srcFade: srcFade, desaturate: desaturate, srcStats: srcStats, srcAreaKm2: srcAreaKm2, SRC_MAX_KM: SRC_MAX_KM, srcPrepare: srcPrepare, srcDistance: srcDistance, srcLast: srcLast,
-    rng: rng, kmeans: kmeans, kmeansClusters: kmeansClusters, kmFit: kmFit, kmAt: kmAt, kmActiveMedian: kmActiveMedian, kmSolve: kmSolve, kmPoints: kmPoints, kmInitialK: kmInitialK, kmCumSolve: kmCumSolve, kmCumAt: kmCumAt, extendCenters: extendCenters, KM_MAX: KM_MAX, aggregate: aggregate, aggState: aggState, aggAdd: aggAdd, aggFinish: aggFinish, aggRadius: aggRadius, kOfLevel: kOfLevel, idxRange: idxRange, computeStats: computeStats, rotScreen: rotScreen, rotDelta: rotDelta,
+    rng: rng, kmeans: kmeans, kmeansClusters: kmeansClusters, kmFit: kmFit, kmAt: kmAt, kmActiveMedian: kmActiveMedian, kmSolve: kmSolve, kmPoints: kmPoints, kmInitialK: kmInitialK, kmCumSolve: kmCumSolve, kmCumAt: kmCumAt, extendCenters: extendCenters, kmWeights: kmWeights, sampleFit: sampleFit, KM_MAX: KM_MAX, aggregate: aggregate, aggState: aggState, aggAdd: aggAdd, aggFinish: aggFinish, aggRadius: aggRadius, kOfLevel: kOfLevel, idxRange: idxRange, computeStats: computeStats, rotScreen: rotScreen, rotDelta: rotDelta,
     screenXAzimuth: screenXAzimuth, dirName: dirName, depthTicks: depthTicks, project0: project0, estIntensity: estIntensity, INT_THRESHOLDS: INT_THRESHOLDS,
     RING_LEVELS: RING_LEVELS, ringRadiiKm: ringRadiiKm, sphereRadiusKm: sphereRadiusKm, geomSphereRadiusKm: geomSphereRadiusKm, surfaceRadiusKm: surfaceRadiusKm, pxPerKm: pxPerKm, dailyCounts: dailyCounts, timeTicks: timeTicks
   };

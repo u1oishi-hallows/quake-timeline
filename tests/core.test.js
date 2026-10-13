@@ -557,6 +557,39 @@ t('累積の k-means：その時刻までの全部をまとめる。先の地震
   assert.strictEqual(sent2[0].seq, 3);
   assert.strictEqual(JSON.stringify(QC.kmCumAt(sent2[0], 9.5 * D)), JSON.stringify(QC.kmCumAt(r3, 9.5 * D)));
 });
+t('k-means の重み（M で重み付け）：中心は重み付きの平均、間引いても重い地震は残る、大きな地震が自分の塊になる', function () {
+  // 重み：10^M は M が 1 増えるごとに 10 倍、エネルギーは 10^1.5 倍。重みなしは null
+  var wg = QC.kmWeights([2, 3, 4], 'gr'), we = QC.kmWeights([2, 4], 'energy');
+  assert.ok(Math.abs(wg[0] - 1) < 1e-12 && Math.abs(wg[1] - 10) < 1e-9 && Math.abs(wg[2] - 100) < 1e-9);
+  assert.ok(Math.abs(we[1] / we[0] - 1000) < 1e-6);
+  assert.strictEqual(QC.kmWeights([3], 'none'), null);
+  // 1 つの塊の中心＝重み付きの平均：x=0（重み 1）と x=10（重み 9）→ 9
+  var C = QC.kmeans(Float64Array.from([0, 0, 10, 0]), 2, 1, { w: Float64Array.from([1, 9]) });
+  assert.ok(Math.abs(C[0] - 9) < 1e-12);
+  // 間引き：重いほうの cap/4 個は必ず残り、重みの合計は変わらない
+  var n = 1000, P = new Float64Array(n * 2), w = new Float64Array(n);
+  for (var i = 0; i < n; i++) { P[i * 2] = i; w[i] = i === 777 ? 1e6 : 1; }
+  var f = QC.sampleFit(P, 2, n, 100, w), sum = 0, has = false;
+  for (i = 0; i < f.w.length; i++) { sum += f.w[i]; if (f.P[i * 2] === 777) has = true; }
+  assert.ok(has);
+  assert.ok(f.w.length <= 100 + 1);
+  assert.ok(Math.abs(sum - (1e6 + 999)) < 1e-6);
+  // 重みなしの間引きはこれまでどおり（等間隔）
+  var f0 = QC.sampleFit(P, 2, n, 100, null);
+  assert.deepStrictEqual([f0.w, f0.P.length, f0.P[2]], [null, 200, 10]);
+  // 大きな地震に中心が寄る：x=0 付近に M2 が 60 回、x=1000 付近に M2 が 60 回、x=400 に M7 が 1 回（k=2）。
+  // M7 は x=0 側の塊に入る。重みなしでは中心は小さな地震の側（x≈9）、エネルギーの重みでは M7 の位置（x≈400）
+  var Q = [], ms = [], ids = [], ts = [];
+  for (i = 0; i < 60; i++) { Q.push(i % 6, 0, 10); ms.push(2); ids.push(i); ts.push(i); }
+  for (i = 0; i < 60; i++) { Q.push(1000 + i % 6, 0, 10); ms.push(2); ids.push(60 + i); ts.push(60 + i); }
+  Q.push(400, 0, 10); ms.push(7); ids.push(120); ts.push(120);
+  var job = function (mode) { return { P: Float64Array.from(Q), dim: 3, ms: ms, ids: ids, ts: ts, k: 2, K: 2, t0: 0, t1: 200, s: S, wmode: mode }; };
+  var cx = function (r) { var g = r.clusters.filter(function (q) { return q.maxI === 120; })[0]; return [g.n, Math.round(g.c[0])]; };
+  assert.deepStrictEqual(cx(QC.kmSolve(job('none'))), [61, 9]);
+  var e = cx(QC.kmSolve(job('energy')));
+  assert.ok(e[0] === 61 && Math.abs(e[1] - 400) <= 1, JSON.stringify(e));
+  assert.strictEqual(QC.kmSolve(job('energy')).clusters.filter(function (q) { return q.maxI === 120; })[0].ev, 120);   // マーカーは M7 の位置
+});
 t('時間の幅で切り出す：開始は含まず、終わり（T）は含む', function () {
   var ev = evOf(['2024-01-01T00:00:00.0,35,135,10,2,,P,,', '2024-01-02T00:00:00.0,35,135,10,2,,P,,',
                  '2024-01-03T00:00:00.0,35,135,10,2,,P,,', '2024-01-04T00:00:00.0,35,135,10,2,,P,,']);

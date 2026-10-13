@@ -27,7 +27,7 @@
     ripple: true, rippleMinM: 3, rippleFrames: 12,
     shape: 'circle', sphereKind: 'est', sphereInt: '4', sphereAmp: 1.31, sphereFade: 300, sphereR5: 30, sphereGrowth: 2,
     ringFrom: '3', ringMinM: 3.5,
-    mode: 'time', aggWindow: '7', aggMethod: 'kmeans', aggLevel: 6, kmDepthW: 1, kmKmPerDay: 3, xsSize: 'M', aggLabel: 'meq', aggCell: 56, aggRatio: 1.35, aggMin: 7, aggMax: 64, aggBase: 2,
+    mode: 'time', aggWindow: '7', aggMethod: 'kmeans', kmWeight: 'none', aggLevel: 6, kmDepthW: 1, kmKmPerDay: 3, xsSize: 'M', aggLabel: 'meq', aggCell: 56, aggRatio: 1.35, aggMin: 7, aggMax: 64, aggBase: 2,
     endSeq: true, endSumSec: 3, endStatsSec: 7,
     bearing: 0, xsDepth: 'equal', showXsec: true, showMt: true, chartView: true,
     vol: 0.5, viewH: 100, dShrink: true, dBlur: 1, dHaze: 1, hazeMin: 0.25, keepBig: true, keepBigM: 7,
@@ -39,7 +39,7 @@
              'rippleMinM', 'step', 'fps', 'sphereAmp', 'sphereFade', 'sphereR5', 'sphereGrowth', 'ringMinM',
              'vol', 'viewH', 'dBlur', 'dHaze', 'hazeMin', 'keepBigM', 'bearing', 'aggLevel', 'kmDepthW', 'kmKmPerDay', 'aggCell', 'aggRatio', 'endSumSec', 'endStatsSec', 'srcNearKm'];
   var BOOL = ['fixedDep', 'lowFreq', 'lfeOnly', 'reference', 'ripple', 'dShrink', 'keepBig', 'showXsec', 'showMt', 'chartView', 'endSeq'];
-  var STR = ['colorMode', 'sizeScale', 'base', 't0', 't1', 'shape', 'sphereInt', 'sphereKind', 'ringFrom', 'xsDepth', 'mode', 'aggLabel', 'aggWindow', 'xsSize', 'aggMethod', 'srcShow'];
+  var STR = ['colorMode', 'sizeScale', 'base', 't0', 't1', 'shape', 'sphereInt', 'sphereKind', 'ringFrom', 'xsDepth', 'mode', 'aggLabel', 'aggWindow', 'xsSize', 'aggMethod', 'srcShow', 'kmWeight'];
 
   var S = Object.assign({}, DEFAULTS);
   var st = {
@@ -123,7 +123,7 @@
     else if (RESPHERE.indexOf(k) >= 0) { computeSpheres(); }
     if (k === 'shape' || k === 'sphereKind' || k === 'vol') applyShapeClass();
     if (k === 'bearing') { st.live = false; layoutRot(); scheduleViewIdx(); }
-    if (k === 'mode' || k === 'aggCell' || k === 'aggMethod' || k === 'aggLevel') { st.agg = null; cancelEnding(true); applyShapeClass(); }
+    if (k === 'mode' || k === 'aggCell' || k === 'aggMethod' || k === 'aggLevel' || k === 'kmWeight') { st.agg = null; cancelEnding(true); applyShapeClass(); }
     if (k === 'mode' && S.mode === 'sum' && st.playing) play(false);
     if (k === 'xsSize') applyXsecSize();
     if (k === 'showXsec' || k === 'showMt') applyChartVisibility();
@@ -554,7 +554,7 @@
   /** dim：3＝xyz（期間の合計）、4＝xyzt（再生）、'cum'＝累積（再生） */
   function kmClusters(dim) {
     // 段階ごとに計算結果を取っておく（同じ表示範囲・期間・重みなら、段階を行き来しても計算し直さない）
-    var same = [dim, S.kmDepthW, S.kmKmPerDay, st.fVer, st.t0, st.t1].join('|'), base = same + '|' + st.viewVer, key = base + '|' + kNow();
+    var same = [dim, S.kmDepthW, S.kmKmPerDay, S.kmWeight, st.fVer, st.t0, st.t1].join('|'), base = same + '|' + st.viewVer, key = base + '|' + kNow();
     if (!st.kmCache || st.kmCache.base !== base) st.kmCache = { base: base, byK: {} };
     if (st.kmCache.byK[key]) return (st.km = st.kmShown = st.kmCache.byK[key]);
     var job = kmJob(dim === 'cum' ? 3 : dim);
@@ -626,7 +626,7 @@
     var pt = QC.kmPoints(st.ev, list, dim, S.kmDepthW, S.kmKmPerDay, st.t0), k = kNow();
     // 4 次元（再生）では k を「同時に見えるマーカーの数」にする。まとめたあと実際に数え、外れていれば 1 回だけまとめ直す（QC.kmSolve）
     var K = dim === 4 ? QC.kmInitialK(k, areaKm2, (st.t1 - st.t0) / DAY, S.kmKmPerDay) : k;
-    return { P: pt.P, dim: dim, ms: pt.ms, ids: pt.ids, ts: pt.ts, k: k, K: K, t0: st.t0, t1: st.t1, noDep: noDep || 0,
+    return { P: pt.P, dim: dim, ms: pt.ms, ids: pt.ids, ts: pt.ts, k: k, K: K, t0: st.t0, t1: st.t1, noDep: noDep || 0, wmode: S.kmWeight,
              s: { life1: S.life1, lifeGrowth: S.lifeGrowth, lifeMin: S.lifeMin, lifeMax: S.lifeMax } };
   }
   /** 塊を時刻 T の姿に（T が null なら期間の合計） */
@@ -758,7 +758,7 @@
     return st.srcData.groups.map(function (grp, k) {
       if (ids.length && ids.indexOf(grp.id) < 0) return null;
       var g = by[k] || { group: k, n: 0, E: 0, max: -1, meq: NaN }, area = grp.areaKm2 || (grp.areaKm2 = QC.srcAreaKm2(grp));
-      return { group: k, name: grp.name, n: g.n, E: g.E, meq: g.meq, max: g.max, area: area, nPer: g.n / area * 1e4, meqPer: g.E ? QC.magOfEnergy(g.E / area * 1e4) : NaN,
+      return { group: k, id: grp.id, name: grp.name, n: g.n, E: g.E, meq: g.meq, max: g.max, area: area, nPer: g.n / area * 1e4, meqPer: g.E ? QC.magOfEnergy(g.E / area * 1e4) : NaN,
                seen: srcSeen(grp) };
     }).filter(Boolean).sort(function (a, b) { return b.E - a.E; });
   }
@@ -904,7 +904,7 @@
         var yy = hy + 1.1 * u + n * rh, bhh = Math.max(4, rh - 0.4 * u), len = g.n ? Math.max(2, barMax * Math.max(0, g.meq - m0) / (m1 - m0)) : 0;
         ctx.textBaseline = 'middle'; ctx.font = fs + 'px sans-serif'; ctx.fillStyle = '#fff';
         ctx.fillText(g.name, sx, yy + bhh / 2);
-        if (len) { ctx.fillStyle = QC.colorOf('mag', g.meq, 0, 0); ctx.fillRect(sx + nameW, yy, len, bhh); }
+        if (len) { ctx.fillStyle = QC.SRC_GROUP_COLORS[g.id] || '#888'; ctx.fillRect(sx + nameW, yy, len, bhh); }   // 棒の色＝海域の色（地図・立体と同じ）
         ctx.fillStyle = '#fff';
         var tx = sx + nameW + barMax + 0.5 * u;
         var none = g.seen <= 0 ? '地図の外（数えていない）' : '0回';
@@ -1174,7 +1174,16 @@
     if (S.shape === 'circle' && S.vol > 0 && !st.v3d) h += '<div class="note" style="color:#333;max-width:150px">' + depthNote() + '</div>';   // 立体表示では奥行きの効きは使わない
     $('legend').innerHTML = h + srcLegendHtml();
   }
+  /** まとめ方の重みの説明（凡例・動画用） */
+  function kmWeightNote() {
+    return { gr: '。重み＝10^M（M が 1 増えるごとに 10 倍。どの M の帯も同じくらい効き、大きな地震の周りが独立しやすい）',
+             energy: '。重み＝エネルギー（大きな地震に中心が寄る。少数の大地震でまとめ方が大きく変わる）' }[S.kmWeight] || '';
+  }
   function aggNote() {
+    if (isKm() || st.v3d) return aggNoteBase() + kmWeightNote();
+    return aggNoteBase();
+  }
+  function aggNoteBase() {
     if (st.v3d) return '集合マーカー：k-means（震源の' + (sumView() ? '東西・南北・深さの3次元' : '東西・南北・深さ・時間の4次元') + '）で、立体表示に選んだ範囲の地震を' +
       (sumView() ? kNow() + '個に' : '同時に約' + kNow() + '個見えるように') + 'まとめ、位置＝中心に近い実際の震源、大きさと色＝推定エネルギーの合計（M相当）、数字＝' +
       { meq: 'M相当', count: '回数', energy: 'エネルギー' }[S.aggLabel] + (isKm() ? '' : '（立体表示ではいつも k-means）');

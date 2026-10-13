@@ -218,7 +218,7 @@
   // ---------------------------------------------------------------- k-means（選んだ範囲で。回転・拡大では計算し直さない）
   function kmFor(dim) {
     var d = roiData(), r = V.roi;
-    var key = [dim, d.key, S.kmDepthW, S.kmKmPerDay, S.aggLevel].join('|');
+    var key = [dim, d.key, S.kmDepthW, S.kmKmPerDay, S.kmWeight, S.aggLevel].join('|');
     if (V.km[key]) return V.km[key];
     if (V.kmPending === key) return null;
     var area = (r.e - r.w) * 111.32 * Math.cos((r.s + r.n) / 2 * Math.PI / 180) * (r.n - r.s) * 110.574;

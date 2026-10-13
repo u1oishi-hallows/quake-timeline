@@ -173,6 +173,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
         <label>まとめ方
           <select id="aggMethod"><option value="kmeans">k-means（震源の空間・時間）</option><option value="kmcum">k-means（累積：その時刻までを全部）</option><option value="grid">格子（地図の上）</option></select></label>
         <label class="kmOnly">マーカーの数（再生では同時に見える数） <span><input type="range" id="aggLevel" min="1" max="10" step="1" style="width:100px"> <b id="aggKV"></b></span></label>
+        <label class="kmOnly">まとめ方の重み <select id="kmWeight"><option value="none">なし（どの地震も同じ）</option><option value="gr">M帯ごとに等しく（10^M）</option><option value="energy">エネルギー（10^1.5M）</option></select></label>
         <label class="kmOnly">深さの重み（1＝水平と同じ km） <input type="number" id="kmDepthW" step="0.5" min="0" max="10"></label>
         <label class="kmOnly taggOnly notCum">時間の重み：1日を何 km とみなすか <input type="number" id="kmKmPerDay" step="0.5" min="0" max="200"></label>
         <div class="note kmOnly">静止画（期間の合計）は震源の位置（東西・南北・深さ）の3次元、時間に沿った再生は時間も加えた4次元で、地図に見えている範囲の地震を k 個にまとめます（地図を動かすとまとめ直します）。マーカーは塊の中心にいちばん近い実際の震央に置き、薄い点線の輪は塊の広がりです。再生中は、その時刻までに起きた地震だけで大きさと位置を決めます。ただし塊の分け方は期間全体を見て決めているので、再生は「振り返り」の表示です。深さ不明の地震はまとめに入れません。<br>「累積」は、その時刻までに起きた地震を全部（過去の地震もその時刻の地震として、消さずに）3次元でまとめます。節目（期間を 24〜150 に分けた時刻）ごとに、前の節目の中心から続けて k-means を回し、節目のあいだに起きた地震は近い塊に足します。その時刻より後の地震は使いません。</div>
@@ -325,8 +326,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 <canvas id="statsCanvas" title="押すと閉じます"></canvas>
 <!-- 版の印（?v=）：js を変えたら上げる。公開ページは数分間 古い写しが残るので、新旧の js が混ざらないように -->
 <script src="vendor/leaflet.min.js"></script>
-<script src="js/core.js?v=20261013f"></script>
-<script src="js/app.js?v=20261013f"></script>
-<script src="js/view3d.js?v=20261013f"></script>
+<script src="js/core.js?v=20261013g"></script>
+<script src="js/app.js?v=20261013g"></script>
+<script src="js/view3d.js?v=20261013g"></script>
 </body>
 </html>
