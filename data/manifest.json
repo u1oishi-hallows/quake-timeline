@@ -12962,14 +12962,15 @@
   },
   "2026-10": {
    "file": "events/2026/2026-10.csv",
-   "rows": 12118,
-   "bytes": 613329,
+   "rows": 17112,
+   "bytes": 866211,
    "src": {
-    "P": 12114,
-    "Q": 4
+    "P": 17102,
+    "I": 1,
+    "Q": 9
    },
    "first": "2026-10-01T00:00:02.8",
-   "last": "2026-10-17T11:54"
+   "last": "2026-10-24T12:44"
   }
  },
  "days": {
@@ -213888,7 +213889,7 @@
    "felt_joined": 4,
    "felt_only_in_shindo": 0,
    "rows": 586,
-   "fetched": "2026-10-17T13:40:47+09:00"
+   "fetched": "2026-10-24T16:25:01+09:00"
   },
   "2026-10-15": {
    "src": "P",
@@ -213897,17 +213898,80 @@
    "felt_joined": 6,
    "felt_only_in_shindo": 0,
    "rows": 734,
-   "fetched": "2026-10-17T13:40:50+09:00"
+   "fetched": "2026-10-24T16:25:03+09:00"
   },
   "2026-10-16": {
-   "src": "Q",
-   "rows": 3,
-   "fetched": "2026-10-17T13:40:32+09:00"
+   "src": "P",
+   "intensity": "ok",
+   "felt": 3,
+   "felt_joined": 2,
+   "felt_only_in_shindo": 1,
+   "rows": 761,
+   "fetched": "2026-10-24T16:25:05+09:00"
   },
   "2026-10-17": {
+   "src": "P",
+   "intensity": "ok",
+   "felt": 3,
+   "felt_joined": 3,
+   "felt_only_in_shindo": 0,
+   "rows": 814,
+   "fetched": "2026-10-24T16:25:07+09:00"
+  },
+  "2026-10-18": {
+   "src": "P",
+   "intensity": "ok",
+   "felt": 6,
+   "felt_joined": 6,
+   "felt_only_in_shindo": 0,
+   "rows": 757,
+   "fetched": "2026-10-24T16:25:09+09:00"
+  },
+  "2026-10-19": {
+   "src": "P",
+   "intensity": "ok",
+   "felt": 6,
+   "felt_joined": 6,
+   "felt_only_in_shindo": 0,
+   "rows": 735,
+   "fetched": "2026-10-24T16:25:11+09:00"
+  },
+  "2026-10-20": {
+   "src": "P",
+   "intensity": "ok",
+   "felt": 2,
+   "felt_joined": 2,
+   "felt_only_in_shindo": 0,
+   "rows": 730,
+   "fetched": "2026-10-24T16:25:13+09:00"
+  },
+  "2026-10-21": {
+   "src": "P",
+   "intensity": "ok",
+   "felt": 3,
+   "felt_joined": 3,
+   "felt_only_in_shindo": 0,
+   "rows": 653,
+   "fetched": "2026-10-24T16:25:15+09:00"
+  },
+  "2026-10-22": {
+   "src": "P",
+   "intensity": "ok",
+   "felt": 3,
+   "felt_joined": 3,
+   "felt_only_in_shindo": 0,
+   "rows": 539,
+   "fetched": "2026-10-24T16:25:17+09:00"
+  },
+  "2026-10-23": {
    "src": "Q",
-   "rows": 1,
-   "fetched": "2026-10-17T13:40:32+09:00"
+   "rows": 6,
+   "fetched": "2026-10-24T16:24:59+09:00"
+  },
+  "2026-10-24": {
+   "src": "Q",
+   "rows": 3,
+   "fetched": "2026-10-24T16:24:59+09:00"
   }
  },
  "years": {
@@ -215212,16 +215276,27 @@
     "removed": 823,
     "added": 823
    }
+  },
+  {
+   "day": "2026-10-17",
+   "at": "2026-10-24T16:24:59+09:00",
+   "src": "Q",
+   "before": 1,
+   "after": 3,
+   "changed": {
+    "removed": 0,
+    "added": 2
+   }
   }
  ],
  "errors": [],
- "updated": "2026-10-17T13:40:51+09:00",
+ "updated": "2026-10-24T16:25:18+09:00",
  "recent": {
-  "fetched": "2026-10-17T13:40:32+09:00",
-  "rows": 183,
-  "days_put": 7,
+  "fetched": "2026-10-24T16:24:59+09:00",
+  "rows": 168,
+  "days_put": 9,
   "dropped": {
-   "地震の震源ではない情報（遠地地震に関する情報）": 2,
+   "地震の震源ではない情報（遠地地震に関する情報）": 4,
    "地震の震源ではない情報（南海トラフ地震関連解説情報）": 1
   }
  }
