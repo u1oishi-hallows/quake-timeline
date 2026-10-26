@@ -634,6 +634,48 @@ t('地図の座標（Web メルカトル）', function () {
   assert.ok(Math.abs(q[0] - 224) < 1e-9 && Math.abs(q[1] - 101.40104481443532) < 1e-9);
   assert.ok(Math.abs(r[0] - 233.38666666666666) < 1e-9 && Math.abs(r[1] - 91.58456464422082) < 1e-9);
 });
+t('有名な地震のテロップ：起きる前には出さない・4秒ぶんで消える・震度の書き方・日時は日本時間', function () {
+  var hold = QC.telopHold(6 * QC.HOUR, 30);
+  assert.strictEqual(hold, 6 * QC.HOUR * 30 * QC.TELOP_SEC);
+  assert.strictEqual(QC.telopHold(QC.DAY, 0.1), QC.DAY);                 // 1 コマより短くしない
+  var a = { ms: QC.parseJst('1995-01-17T05:46:51.8') }, b = { ms: QC.parseJst('1995-01-18T00:00') }, L = [b, a];
+  assert.deepStrictEqual(QC.namedActive(L, a.ms - 1, hold), []);
+  assert.deepStrictEqual(QC.namedActive(L, a.ms, hold), [a]);
+  assert.deepStrictEqual(QC.namedActive(L, b.ms, hold), [a, b]);           // 古い順
+  assert.deepStrictEqual(QC.namedActive(L, a.ms + hold - 1, hold), [a, b]);
+  assert.deepStrictEqual(QC.namedActive(L, a.ms + hold, hold), [b]);
+  assert.deepStrictEqual(QC.namedInPeriod(L, a.ms, b.ms), [a]);           // 終わりは含まない
+  assert.strictEqual(QC.namedInt('7'), '最大震度7');
+  assert.strictEqual(QC.namedInt('6'), '最大震度6');                     // 旧い階級はそのまま
+  assert.strictEqual(QC.namedInt('6-'), '最大震度6弱');
+  assert.strictEqual(QC.namedInt('5+'), '最大震度5強');
+  assert.strictEqual(QC.namedInt('F'), '');
+  assert.strictEqual(QC.namedInt('?'), '');
+  assert.strictEqual(QC.namedInt(''), '');
+  var x = QC.namedText({ name: '平成7年(1995年)兵庫県南部地震', alias: '阪神・淡路大震災', note: '', t: '1995-01-17T05:46:51.8', mag: 7.3, maxi: '7', dep: 16.06 });
+  assert.strictEqual(x.title, '平成7年(1995年)兵庫県南部地震「阪神・淡路大震災」');
+  assert.strictEqual(x.sub, '1995年1月17日 5時46分　M7.3　最大震度7　深さ16km');
+  var y = QC.namedText({ name: '1978年宮城県沖地震', alias: '', note: '', t: '1978-06-12T17:14:25.4', mag: 7.4, maxi: 'F', dep: null });
+  assert.strictEqual(y.sub, '1978年6月12日 17時14分　M7.4');
+});
+t('有名な地震の一覧：どれもデータの中の地震そのもの（時刻・震源・M・震度が CSV の行と一致）、出典が付いている', function () {
+  var fs = require('fs'), path = require('path'), root = path.join(__dirname, '..');
+  var d = JSON.parse(fs.readFileSync(path.join(root, 'data/overlays/named_quakes.json'), 'utf8'));
+  assert.ok(d.quakes.length >= 40);
+  var prev = -Infinity;
+  d.quakes.forEach(function (q) {
+    assert.ok(d.sources[q.src], q.name + ' の出典');
+    var ms = QC.parseJst(q.t);
+    assert.ok(ms > prev, q.name + ' が時刻順');
+    prev = ms;
+    var csv = fs.readFileSync(path.join(root, 'data/events', q.t.slice(0, 4), q.t.slice(0, 7) + '.csv'), 'utf8');
+    var row = csv.split('\n').filter(function (r) { return r.indexOf(q.t + ',') === 0; });
+    assert.strictEqual(row.length, 1, q.name + ' の行');
+    var c = row[0].split(',');
+    assert.deepStrictEqual([+c[1], +c[2], +c[4], c[5]], [q.lat, q.lon, q.mag, q.maxi], q.name);
+    assert.strictEqual(c[3] === '' ? null : +c[3], q.dep, q.name + ' の深さ');
+  });
+});
 
 console.log((n - ng) + ' / ' + n + ' 通過');
 process.exit(ng ? 1 : 0);

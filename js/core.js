@@ -782,6 +782,34 @@
     return s;
   }
 
+  // ---------------------------------------------------------------- 有名な地震（テロップ。data/overlays/named_quakes.json）
+  /** テロップを出しておく実際の秒数（再生の速さによらない）。再生では T が 1 秒に step×fps 進む */
+  var TELOP_SEC = 4;
+  /** テロップを出しておくデータの時間（ms）：TELOP_SEC 秒ぶん。ただし 1 コマより短くしない */
+  function telopHold(step, fps) { return Math.max(step, step * fps * TELOP_SEC); }
+  /** 時刻 T に出すテロップ：起きた時刻 ≦ T ＜ 起きた時刻＋hold。起きる前には決して出さない。古い順 */
+  function namedActive(list, T, hold) {
+    return list.filter(function (q) { var d = T - q.ms; return d >= 0 && d < hold; })
+      .sort(function (a, b) { return a.ms - b.ms; });
+  }
+  /** 期間 [t0, t1) に起きたもの（期間の合計の図で、震央に名前を書く） */
+  function namedInPeriod(list, t0, t1) { return list.filter(function (q) { return q.ms >= t0 && q.ms < t1; }); }
+  /** 最大震度の書き方。1996年10月より前は 5・6 に弱・強が無い（旧い階級）。不明・階級不明は書かない */
+  function namedInt(maxi) {
+    if (/^[1-7]$/.test(maxi)) return '最大震度' + maxi;
+    if (/^[56][-+]$/.test(maxi)) return '最大震度' + maxi[0] + (maxi[1] === '-' ? '弱' : '強');
+    return '';
+  }
+  /** テロップの文字：title＝名前（震災名など）、sub＝日時・M・最大震度・深さ。日時は気象庁の震源の時刻（日本時間）を分まで */
+  function namedText(q) {
+    var m = /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d)/.exec(q.t);
+    var sub = [m ? +m[1] + '年' + +m[2] + '月' + +m[3] + '日 ' + +m[4] + '時' + m[5] + '分' : q.t, 'M' + q.mag.toFixed(1)];
+    var it = namedInt(q.maxi);
+    if (it) sub.push(it);
+    if (q.dep != null) sub.push('深さ' + Math.round(q.dep) + 'km');
+    return { title: q.name + (q.alias ? '「' + q.alias + '」' : '') + (q.note ? '（' + q.note + '）' : ''), sub: sub.join('　') };
+  }
+
   // ---------------------------------------------------------------- グラフ
   /** 期間を日本時間の日ごとに数える */
   function dailyCounts(ev, idx, t0, t1) {
@@ -834,7 +862,8 @@
     SRCD_STEPS: SRCD_STEPS, SRC_GROUP_COLORS: SRC_GROUP_COLORS, SRC_FAR: SRC_FAR, SRCD_UNKNOWN: SRCD_UNKNOWN, srcFade: srcFade, desaturate: desaturate, srcStats: srcStats, srcAreaKm2: srcAreaKm2, SRC_MAX_KM: SRC_MAX_KM, srcPrepare: srcPrepare, srcDistance: srcDistance, srcLast: srcLast,
     rng: rng, kmeans: kmeans, kmeansClusters: kmeansClusters, kmFit: kmFit, kmAt: kmAt, kmActiveMedian: kmActiveMedian, kmSolve: kmSolve, kmPoints: kmPoints, kmInitialK: kmInitialK, kmCumSolve: kmCumSolve, kmCumAt: kmCumAt, extendCenters: extendCenters, kmWeights: kmWeights, sampleFit: sampleFit, KM_MAX: KM_MAX, aggregate: aggregate, aggState: aggState, aggAdd: aggAdd, aggFinish: aggFinish, aggRadius: aggRadius, kOfLevel: kOfLevel, idxRange: idxRange, computeStats: computeStats, rotScreen: rotScreen, rotDelta: rotDelta,
     screenXAzimuth: screenXAzimuth, dirName: dirName, depthTicks: depthTicks, project0: project0, estIntensity: estIntensity, INT_THRESHOLDS: INT_THRESHOLDS,
-    RING_LEVELS: RING_LEVELS, ringRadiiKm: ringRadiiKm, sphereRadiusKm: sphereRadiusKm, geomSphereRadiusKm: geomSphereRadiusKm, surfaceRadiusKm: surfaceRadiusKm, pxPerKm: pxPerKm, dailyCounts: dailyCounts, timeTicks: timeTicks
+    RING_LEVELS: RING_LEVELS, ringRadiiKm: ringRadiiKm, sphereRadiusKm: sphereRadiusKm, geomSphereRadiusKm: geomSphereRadiusKm, surfaceRadiusKm: surfaceRadiusKm, pxPerKm: pxPerKm, dailyCounts: dailyCounts, timeTicks: timeTicks,
+    TELOP_SEC: TELOP_SEC, telopHold: telopHold, namedActive: namedActive, namedInPeriod: namedInPeriod, namedInt: namedInt, namedText: namedText
   };
   if (typeof module === 'object' && module.exports) module.exports = QC;
   else root.QC = QC;

@@ -20,7 +20,7 @@
     { t: '2016-04-01', label: '自動処理の震源が加わる', note: '2016年4月から自動処理で決めた震源が加わり、主に M1 未満の回数が増えています。年をまたいで回数を比べるなら M2 以上が目安です。' }];
 
   var DEFAULTS = {
-    srcShow: '', srcNearKm: 10, fixedDep: false,
+    srcShow: '', srcNearKm: 10, fixedDep: false, telop: true,
     magMin: 1, intMin: 0, depMin: 0, depMax: 1000, lowFreq: true, reference: true, lfeOnly: false,
     colorMode: 'mag', sizeScale: 'exp', r1: 1.5, sizeGrowth: 1.7,
     life1: 3, lifeGrowth: 1.8, lifeMin: 1 / 24, lifeMax: 120,
@@ -38,7 +38,7 @@
   var NUM = ['magMin', 'intMin', 'depMin', 'depMax', 'r1', 'sizeGrowth', 'life1', 'lifeGrowth', 'lifeMax',
              'rippleMinM', 'step', 'fps', 'sphereAmp', 'sphereFade', 'sphereR5', 'sphereGrowth', 'ringMinM',
              'vol', 'viewH', 'dBlur', 'dHaze', 'hazeMin', 'keepBigM', 'bearing', 'aggLevel', 'kmDepthW', 'kmKmPerDay', 'aggCell', 'aggRatio', 'endSumSec', 'endStatsSec', 'srcNearKm'];
-  var BOOL = ['fixedDep', 'lowFreq', 'lfeOnly', 'reference', 'ripple', 'dShrink', 'keepBig', 'showXsec', 'showMt', 'chartView', 'endSeq'];
+  var BOOL = ['telop', 'fixedDep', 'lowFreq', 'lfeOnly', 'reference', 'ripple', 'dShrink', 'keepBig', 'showXsec', 'showMt', 'chartView', 'endSeq'];
   var STR = ['colorMode', 'sizeScale', 'base', 't0', 't1', 'shape', 'sphereInt', 'sphereKind', 'ringFrom', 'xsDepth', 'mode', 'aggLabel', 'aggWindow', 'xsSize', 'aggMethod', 'srcShow', 'kmWeight'];
 
   var S = Object.assign({}, DEFAULTS);
@@ -234,6 +234,94 @@
     var d = st.srcData, ids = srcIds();
     if (!d) return '';
     return d.groups.filter(function (g) { return !ids.length || ids.indexOf(g.id) >= 0; }).map(function (g) { return g.name; }).join('・');
+  }
+  // ---------------------------------------------------------------- 有名な地震（テロップ。research/build_named_quakes.py）
+  // 名前・日付は気象庁の一覧、時刻・震源・M はこのデータの地震。再生で起きた時刻を過ぎたら TELOP_SEC 秒だけ下に名前を出し、
+  // 地図の震央に印を付ける（起きる前には出さない）。期間の合計の図では、期間中に起きたものの震央に名前を書く
+  function loadNamed() {
+    return fetchJson('data/overlays/named_quakes.json').then(function (d) {
+      st.named = d.quakes.map(function (q) {
+        var p = QC.project0(q.lat, q.lon);
+        return Object.assign({ ms: QC.parseJst(q.t), px: p[0], py: p[1] }, q, QC.namedText(q));
+      });
+      st.namedSrc = Object.keys(d.sources);
+      drawAll();
+    }).catch(function (e) { setStatus('有名な地震の一覧を読めませんでした：' + e.message, true); });
+  }
+  /** いま出すもの：再生中の図ではテロップ（起きてから少しの間）、期間の合計の図では期間中のもの全部 */
+  function namedNow(sum) {
+    if (!S.telop || !st.named) return [];
+    // 再生中の図でも期間の始めより前に起きたものは出さない（止めた時刻によっては、まだ出しておく間に入ってしまうため）
+    return sum ? QC.namedInPeriod(st.named, st.t0, st.t1) : QC.namedActive(QC.namedInPeriod(st.named, st.t0, st.t1), st.T, QC.telopHold(S.step, S.fps));
+  }
+  /** 画面の下のテロップ（平面の地図と立体表示の両方の上に出す）。期間の合計・最後のまとめの間は出さない */
+  function renderTelop() {
+    var el = $('telopBox'), list = sumView() ? [] : namedNow(false);
+    el.hidden = !list.length;
+    el.classList.toggle('top', !!list.length && telopTop(list[list.length - 1], 1, viewSize().H));
+    el.innerHTML = '';
+    list.slice(-3).forEach(function (q) {
+      var d = document.createElement('div'), a = document.createElement('div'), b = document.createElement('div');
+      a.className = 't1'; a.textContent = q.title; b.className = 't2'; b.textContent = q.sub;
+      d.appendChild(a); d.appendChild(b); el.appendChild(d);
+    });
+  }
+  /** テロップを上に出すか：いちばん新しい地震の震央が地図の下 4 割にあるとき（下に出すと震央とまわりの地震を隠すため）。立体表示では下 */
+  function telopTop(q, scale, H) {
+    if (st.v3d || !map) return false;
+    var k = Math.pow(2, map.getZoom()), o = map.getPixelBounds().min, ms = map.getSize(), v = viewSize();
+    var p = QC.rotScreen(q.px * k - o.x, q.py * k - o.y, ms.x, ms.y, v.W, v.H, S.bearing);
+    return p[1] * scale > H * 0.6;
+  }
+  /** 地図の震央に印と名前（平面の地図・動画） */
+  function drawNamed(ctx, scale, W, H, sum) {
+    var list = namedNow(sum);
+    if (!list.length) return;
+    var k = Math.pow(2, map.getZoom()), o = map.getPixelBounds().min, ms = map.getSize(), v = viewSize();
+    ctx.save();
+    ctx.font = 'bold ' + 12 * scale + 'px sans-serif'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+    var pts = [], boxes = [], lh = 15 * scale;
+    list.forEach(function (q) {
+      var p = QC.rotScreen(q.px * k - o.x, q.py * k - o.y, ms.x, ms.y, v.W, v.H, S.bearing), x = p[0] * scale, y = p[1] * scale;
+      if (x < 0 || y < 0 || x > W || y > H) return;
+      pts.push([x, y, q]);
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 4 * scale; ctx.beginPath(); ctx.arc(x, y, 9 * scale, 0, 2 * Math.PI); ctx.stroke();
+      ctx.strokeStyle = '#c62828'; ctx.lineWidth = 2 * scale; ctx.beginPath(); ctx.arc(x, y, 9 * scale, 0, 2 * Math.PI); ctx.stroke();
+    });
+    // 名前は丸を全部描いてから。近くの名前と重なるときは上下にずらし、丸から細い線を引く
+    pts.forEach(function (pt) {
+      var x = pt[0], y = pt[1], q = pt[2];
+      var name = q.name.replace(/^(昭和|平成|令和)\d+年(\(\d+年\))?/, ''), left = x > W * 0.7, w = ctx.measureText(name).width;
+      var tx = x + (left ? -14 : 14) * scale, bx = left ? tx - w : tx, ty = y;
+      for (var j = 1; j < 12 && boxes.some(function (b) { return bx < b[2] && bx + w > b[0] && ty - lh / 2 < b[3] && ty + lh / 2 > b[1]; }); j++)
+        ty = y + (j % 2 ? 1 : -1) * Math.ceil(j / 2) * lh;
+      boxes.push([bx, ty - lh / 2, bx + w, ty + lh / 2]);
+      if (ty !== y) { ctx.strokeStyle = '#7f1d1d'; ctx.lineWidth = scale; ctx.beginPath(); ctx.moveTo(x + (left ? -9 : 9) * scale, y); ctx.lineTo(tx + (left ? 2 : -2) * scale, ty); ctx.stroke(); }
+      ctx.textAlign = left ? 'right' : 'left';
+      ctx.lineWidth = 3.5 * scale; ctx.strokeStyle = '#fff'; ctx.strokeText(name, tx, ty);
+      ctx.fillStyle = '#7f1d1d'; ctx.fillText(name, tx, ty);
+    });
+    ctx.restore();
+  }
+  /** 動画のテロップ（画面のテロップと同じもの）：地図の下の端の真ん中 */
+  function drawTelopCanvas(ctx, W, H, scale) {
+    var list = namedNow(false).slice(-3);
+    if (!list.length) return;
+    var top = telopTop(list[list.length - 1], scale, H), h = 42 * scale, gap = 4 * scale;
+    // 下に出すときは新しいものをいちばん下に、上に出すときは古いものから上から順に（画面のテロップと同じ並び）
+    var y = top ? 64 * scale : H - 26 * scale - list.length * h - (list.length - 1) * gap;
+    ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    list.forEach(function (q) {
+      ctx.font = 'bold ' + 16 * scale + 'px sans-serif'; var w1 = ctx.measureText(q.title).width;
+      ctx.font = 12 * scale + 'px sans-serif'; var w2 = ctx.measureText(q.sub).width;
+      var w = Math.min(W - 24 * scale, Math.max(w1, w2) + 24 * scale);
+      ctx.globalAlpha = 0.78; ctx.fillStyle = '#1d2433'; ctx.fillRect(W / 2 - w / 2, y, w, h);
+      ctx.globalAlpha = 1; ctx.fillStyle = '#fff';
+      ctx.font = 'bold ' + 16 * scale + 'px sans-serif'; ctx.fillText(q.title, W / 2, y + 20 * scale, w - 12 * scale);
+      ctx.font = 12 * scale + 'px sans-serif'; ctx.fillStyle = '#dfe6f0'; ctx.fillText(q.sub, W / 2, y + 36 * scale, w - 12 * scale);
+      y += h + gap;
+    });
+    ctx.restore();
   }
   /** 想定震源域からの距離（色を「想定震源域からの距離」にしたとき）。地震ごとに 1 回だけ求め、絞り込み・海域が変わったら作り直す。
    *  海域は「重ねる図」で選んだもの（選んでいなければ全部） */
@@ -471,9 +559,11 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, c.width, c.height);
     var v = viewSize();
+    renderTelop();                                // 地図を動かしたときも、震央の位置に合わせて上か下かを決め直す
     if (st.v3d) { st.drawn = []; drawStatsScreen(); return; }      // 立体表示の間は平面の地図に描かない（隠れているので）
     st.drawn = sumView() ? drawAggregate(ctx, 1, v.W, v.H)
       : S.mode === 'timeAgg' ? drawTimeAgg(ctx, st.T, 1, v.W, v.H) : drawQuakes(ctx, st.T, makeProj(1), 1, v.W, v.H);
+    drawNamed(ctx, 1, v.W, v.H, sumView());
     drawStatsScreen();
     drawXsecScreen();
   }
@@ -1593,6 +1683,7 @@
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     var drawn = endState ? drawAggregate(ctx, scale, W * scale, H * scale)
       : S.mode === 'timeAgg' ? drawTimeAgg(ctx, st.T, scale, W * scale, H * scale) : drawQuakes(ctx, st.T, makeProj(scale), scale, W * scale, H * scale);
+    drawNamed(ctx, scale, W * scale, H * scale, !!endState);
     if (rotated()) {   // 北の向き
       ctx.save(); ctx.translate(W * scale - 24 * scale, 66 * scale); ctx.rotate(S.bearing * Math.PI / 180);
       ctx.fillStyle = '#fff'; ctx.globalAlpha = 0.85; ctx.beginPath(); ctx.arc(0, 0, 15 * scale, 0, 2 * Math.PI); ctx.fill(); ctx.globalAlpha = 1;
@@ -1615,6 +1706,7 @@
     var cw = ctx.measureText(CREDIT).width;
     ctx.globalAlpha = 0.8; ctx.fillStyle = '#fff'; ctx.fillRect(W * scale - cw - 12 * scale, H * scale - 18 * scale, cw + 12 * scale, 18 * scale);
     ctx.globalAlpha = 1; ctx.fillStyle = '#1d2433'; ctx.fillText(CREDIT, W * scale - 6 * scale, H * scale - 4 * scale);
+    if (!endState) drawTelopCanvas(ctx, W * scale, H * scale, scale);
     if (xsH && endState) drawXsecAgg(ctx, W * scale, H * scale, H * scale, xsH * scale, scale, '#ffffff', '#1d2433', '#5b6475');
     else if (xsH && S.mode === 'timeAgg') drawXsecAgg(ctx, W * scale, H * scale, H * scale, xsH * scale, scale, '#ffffff', '#1d2433', '#5b6475', st.T);
     else if (xsH) drawXsec(ctx, drawn, W * scale, H * scale, H * scale, xsH * scale, scale, st.T, '#ffffff', '#1d2433', '#5b6475');
@@ -1742,6 +1834,7 @@
       st.manifest = m;
       st.dataEnd = dataRange().last;
       renderDataNote();
+      loadNamed();
       return applyPeriod();
     }).catch(function (e) {
       setStatus('データを読み込めませんでした：' + e.message, true);

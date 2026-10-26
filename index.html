@@ -67,6 +67,11 @@ body.uiHidden #legend, body.uiHidden #v3dBar { display: none !important; }
 #clock { left: 12px; top: 10px; font-size: 26px; font-weight: 700; color: #1d2433;
   text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 6px #fff; }
 #clockNote { left: 14px; top: 46px; font-size: 12px; color: #1d2433; text-shadow: 0 0 3px #fff, 0 0 3px #fff; }
+#telopBox { left: 50%; bottom: 26px; transform: translateX(-50%); display: flex; flex-direction: column; gap: 4px; align-items: center; max-width: calc(100% - 24px); }
+#telopBox.top { bottom: auto; top: 64px; }
+#telopBox > div { background: rgba(29,36,51,.78); color: #fff; padding: 3px 12px 4px; border-radius: 4px; text-align: center; }
+#telopBox .t1 { font-size: 16px; font-weight: 700; }
+#telopBox .t2 { font-size: 12px; color: #dfe6f0; }
 #kmBusy { display: none; left: 50%; top: 12px; transform: translateX(-50%); background: rgba(29,36,51,.78); color: #fff; font-size: 12px; padding: 3px 10px; border-radius: 10px; pointer-events: none; }
 #legend { left: 10px; top: 72px; background: rgba(255,255,255,.88); color: #1d2433; border-radius: 6px;
   padding: 6px 8px; font-size: 12px; line-height: 1.25; }
@@ -142,6 +147,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     <div id="clockNote" class="ov"></div>
     <div id="legend" class="ov"></div>
     <button id="uiTog" title="凡例と操作盤を隠す・出す（H キー）">凡例などを隠す</button>
+    <div id="telopBox" class="ov" hidden></div>
     <div id="kmBusy" class="ov">集合マーカーをまとめ直しています…</div>
     <div id="roiPick"><div id="roiBox"></div>
       <div id="roiBar"><span id="roiMsg"></span><button id="roiAll">今見えている範囲全部</button><button id="roiGo">この範囲を立体で見る</button><button id="roiRedo">選び直す</button><button id="roiCancel">やめる</button></div>
@@ -216,6 +222,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
       </div>
       <label>まとめ（最後の統計）：面から <input type="number" id="srcNearKm" min="1" max="100" step="1" style="width:56px"> km 以内の地震を海域ごとに合計</label>
       <div class="note">地震調査研究推進本部の長期評価のモデル（震源域のパターン・断層面）を加工し、主な想定はその場所が震源域に入る割合（1%・25%・50%・75%以上）の濃淡、どの想定も外形の線（点線＝長方形の断層面）、プレート境界（断層面）の深さの等深線（10km ごと）を描きます。立体表示では外形と等深線を実際の深さに描きます。プレートの固着を観測で測った分布ではありません。出典：J-SHIS（防災科学技術研究所）を加工。</div>
+      <label class="chk" style="margin-top:6px"><input type="checkbox" id="telop"> 有名な地震の名前（テロップ）</label>
+      <div class="note">再生で起きた時刻を過ぎると、下に名前・日時・M・最大震度を4秒ほど出し、地図の震央に赤い丸を付けます（動画にも入ります）。期間の合計の図では、期間中に起きたものの震央に名前を書きます。載せているのは気象庁の2つの一覧（「気象庁が名称を定めた気象・地震・火山現象一覧」と「過去の地震津波災害」）にある1919年以降の日本の周辺の地震44件で、名前・震災名・日付は一覧のとおり、時刻・震源・M・最大震度はこの地図のデータ（その日・その辺りでMのいちばん大きい地震）です。1996年9月までの最大震度は当時の階級（5・6に弱・強が無い）で、データで階級が分からないもの（1978〜1984年の5件）は書きません。立体表示ではテロップだけ出します。</div>
     </fieldset>
     <fieldset>
       <legend class="fs">地図の向きと下段のグラフ</legend>
@@ -326,8 +334,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 <canvas id="statsCanvas" title="押すと閉じます"></canvas>
 <!-- 版の印（?v=）：js を変えたら上げる。公開ページは数分間 古い写しが残るので、新旧の js が混ざらないように -->
 <script src="vendor/leaflet.min.js"></script>
-<script src="js/core.js?v=20261013i"></script>
-<script src="js/app.js?v=20261013i"></script>
-<script src="js/view3d.js?v=20261013i"></script>
+<script src="js/core.js?v=20261026e"></script>
+<script src="js/app.js?v=20261026e"></script>
+<script src="js/view3d.js?v=20261026e"></script>
 </body>
 </html>

@@ -139,6 +139,13 @@ MUTANTS = [
     ('js/core.js', "return mx >= 0 && mx <= 9 ? INT_STYLES[mx] : INT_UNKNOWN;", "return mx >= 0 && mx <= 9 ? INT_STYLES[mx] : INT_STYLES[0];", '震度不明を無感として描く'),
     ('js/core.js', "{ v: 9, fill: '#b40068'", "{ v: 9, fill: '#a50021'", '震度7と6強が同じ色'),
     ('js/core.js', "if (mode === 'maxi') { var s = intensityStyle(maxi); return { fill: s.fill, stroke: s.stroke, dash: !!s.dash }; }", "", '最大震度の切り替えが効かない'),
+    ('js/core.js', "return d >= 0 && d < hold;", "return d >= -hold && d < hold;", 'テロップが起きる前から出る'),
+    ('js/core.js', "return d >= 0 && d < hold;", "return d >= 0 && d <= hold;", 'テロップが消える境目'),
+    ('js/core.js', "return Math.max(step, step * fps * TELOP_SEC);", "return step * fps * TELOP_SEC;", 'テロップが1コマより短い'),
+    ('js/core.js', "if (/^[1-7]$/.test(maxi)) return '最大震度' + maxi;", "if (/^[1-7F]$/.test(maxi)) return '最大震度' + maxi;", '階級不明を震度と書く'),
+    ('js/core.js', "(maxi[1] === '-' ? '弱' : '強')", "(maxi[1] === '+' ? '弱' : '強')", '弱・強の取り違え'),
+    ('js/core.js', "return list.filter(function (q) { return q.ms >= t0 && q.ms < t1; });", "return list.filter(function (q) { return q.ms >= t0 && q.ms <= t1; });", '期間の終わりを含む'),
+    ('js/core.js', "+m[1] + '年' + +m[2] + '月' + +m[3] + '日 '", "+m[1] + '年' + +m[3] + '月' + +m[2] + '日 '", 'テロップの月と日の取り違え'),
 ]
 
 
@@ -156,6 +163,7 @@ def main():
     tmp = tempfile.mkdtemp()
     work = os.path.join(tmp, 'w')
     shutil.copytree(ROOT, work, ignore=shutil.ignore_patterns('.git', 'data', 'node_modules'))
+    os.symlink(os.path.join(ROOT, 'data'), os.path.join(work, 'data'))   # データは写さず読むだけ（有名な地震の一覧と CSV の突き合わせに使う）
     if not run_tests(work) or not run_tests(work, 'x.js'):
         print('壊す前の検査がすでに落ちている')
         return 1
